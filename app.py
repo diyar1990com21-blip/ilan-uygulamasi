@@ -114,8 +114,15 @@ def logout():
 
 # Veritabanını Otomatik Oluşturma
 with app.app_context():
-    db.create_all()
+    # Veritabanını güvenli bir şekilde oluşturma
+try:
+    with app.app_context():
+        db.create_all()
+except Exception as e:
+    print("Veritabanı oluşturulurken hata: ", e)
 
 if __name__ == '__main__':
-    port = int(os.environ.get('GET', 5000)) # Render port ayarı
+    # PORT kelimesi büyük harflerle kesinlikle 'PORT' olmalıdır
+    port = int(os.environ.get('PORT', 5000)) 
     app.run(host='0.0.0.0', port=port)
+    
