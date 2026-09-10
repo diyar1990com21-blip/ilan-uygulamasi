@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -41,7 +41,7 @@ class Teklif(db.Model):
 
 @app.route('/')
 def home():
-    return jsonify({"status": "ok"})
+    return render_template('index.html')
 
 @app.route('/api/kayit', methods=['POST'])
 def kayit():
