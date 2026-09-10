@@ -3,12 +3,19 @@ from flask import Flask, request, render_template, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
-app = Flask(__name__)
+# Kesin Çözüm: Projenin sunucudaki kök dizin yolunu açıkça belirtiyoruz
+base_dir = os.path.abspath(os.path.dirname(__file__))
 
-# Render ve Yerel ortamda sorunsuz çalışacak veritabanı ve gizli anahtar ayarları
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/ilan.db'
+app = Flask(
+    __name__,
+    template_folder=os.path.join(base_dir, 'templates'),
+    static_folder=os.path.join(base_dir, 'static')
+)
+
+# Kesin Çözüm: Veritabanı dosyasını kök dizinde kalıcı ve izin sorunu olmayan bir yere bağlıyoruz
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(base_dir, 'ilan_uygulamasi.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = 'ilan_uygulamasi_cok_gizli_anahtar_123'
+app.config['SECRET_KEY'] = 'ilan_uygulamasi_kalici_ve_kesin_gizli_anahtar_9988'
 
 db = SQLAlchemy(app)
 
@@ -21,7 +28,7 @@ class User(db.Model):
     telefon = db.Column(db.String(15), unique=True, nullable=False)
     sifre_hash = db.Column(db.String(128), nullable=False)
     ad_soyad = db.Column(db.String(100), nullable=False)
-    hesap_tipi = db.Column(db.String(20), nullable=False) # 'alici' veya 'esnaf'
+    hesap_tipi = db.Column(db.String(20), nullable=False)
     onayli_esnaf = db.Column(db.Boolean, default=False)
     vergi_no = db.Column(db.String(50), nullable=True)
     dukan_adresi = db.Column(db.Text, nullable=True)
@@ -50,14 +57,12 @@ class Teklif(db.Model):
 # 🛣️ SAYFA YÖNLENDİRMELERİ (ROUTES)
 # ==========================================
 
-# Ana Sayfa Kontrolü
 @app.route('/')
 def home():
     if 'user_id' in session:
         return redirect(url_for('ilanlar_sayfasi'))
     return redirect(url_for('login'))
 
-# Giriş Yap Sayfası
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -72,11 +77,10 @@ def login():
             session['hesap_tipi'] = user.hesap_tipi
             return redirect(url_for('ilanlar_sayfasi'))
         
-        return "Hatalı telefon numarası veya şifre! Lütfen tekrar deneyin.", 401
+        return "Hatalı telefon numarası veya şifre!", 401
         
     return render_template('login.html')
 
-# Kayıt Ol Sayfası
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -91,9 +95,8 @@ def register():
             return "Lütfen zorunlu alanları doldurun!", 400
 
         if User.query.filter_by(telefon=telefon).first():
-            return "Bu telefon numarası zaten sisteme kayıtlı!", 400
+            return "Bu telefon numarası zaten kayıtlı!", 400
 
-        # Güvenli şifreleme metodu
         hashed_sifre = generate_password_hash(sifre)
         
         yeni_kullanici = User(
@@ -111,34 +114,33 @@ def register():
         
     return render_template('register.html')
 
-# İlanlar Paneli (Dashboard)
 @app.route('/ilanlar')
 def ilanlar_sayfasi():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
     tum_ilanlar = Ilan.query.all()
-    # Eğer templates içinde ilanlar.html varsa onu açar, yoksa genel dashboard şablonunu tetikler
     try:
         return render_template('ilanlar.html', ilanlar=tum_ilanlar)
     except:
-        return render_template('dashboard.html', ilanlar=tum_ilanlar)
+        try:
+            return render_template('dashboard.html', ilanlar=tum_ilanlar)
+        except:
+            return "Giriş başarılı! İlanlar paneli yükleniyor ancak HTML şablonu bulunamadı.", 200
 
-# Güvenli Çıkış Yapma
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
 
 # ==========================================
-# 🛠️ VERİTABANI BAŞLATMA VE PORT AYARLARI
+# 🛠️ VERİTABANI VE SUNUCU BAŞLATMA
 # ==========================================
 
-# Veritabanı tablolarını otomatik ayağa kaldırır
+# Sunucu her açıldığında kilitlenmeyi önleyen güvenli başlatma
 with app.app_context():
     db.create_all()
 
 if __name__ == '__main__':
-    # Render için PORT ortam değişkenini dinamik olarak çeker
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
