@@ -42,6 +42,10 @@ class Teklif(db.Model):
 @app.route('/')
 def home():
     return render_template('index.html')
+    @app.route('/ilanlar')
+def ilanlar_sayfasi():
+    return render_template('ilanlar.html')
+
 
 @app.route('/api/kayit', methods=['POST'])
 def kayit():
