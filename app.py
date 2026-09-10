@@ -42,10 +42,10 @@ class Teklif(db.Model):
 @app.route('/')
 def home():
     return render_template('index.html')
-    @app.route('/ilanlar')
+
+@app.route('/ilanlar')
 def ilanlar_sayfasi():
     return render_template('ilanlar.html')
-
 
 @app.route('/api/kayit', methods=['POST'])
 def kayit():
@@ -64,4 +64,5 @@ with app.app_context():
     db.create_all()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
