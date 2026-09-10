@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parca ve Esya Platformu</title>
+    <script src="https://tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: sans-serif; }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- ANA GİRİŞ PANELİ -->
+    <div id="auth-box" class="w-full max-w-md bg-slate-800 p-6 rounded-2xl shadow-xl border border-slate-700">
+        <h2 id="form-title" class="text-2xl font-bold text-center mb-6 text-emerald-400">Giriş Yap</h2>
+        
+        <!-- Telefon Numarası Girişi -->
+        <div class="mb-4">
+            <label class="block text-sm font-medium mb-1">Telefon Numarası</label>
+            <input type="tel" id="tel" placeholder="05551234567" class="w-full p-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <!-- Ad Soyad (Sadece Kayıt Olurken Görünecek) -->
+        <div id="name-area" class="mb-4 hidden">
+            <label class="block text-sm font-medium mb-1">Ad Soyad / Firma Adı</label>
+            <input type="text" id="ad_soyad" placeholder="Ahmet Yılmaz" class="w-full p-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <!-- Şifre Girişi -->
+        <div class="mb-4">
+            <label class="block text-sm font-medium mb-1">Şifre</label>
+            <input type="password" id="sifre" placeholder="••••••" class="w-full p-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <!-- Hesap Tipi Seçimi (Sadece Kayıt Olurken Görünecek) -->
+        <div id="type-area" class="mb-4 hidden">
+            <label class="block text-sm font-medium mb-2">Hesap Türü</label>
+            <div class="flex gap-4">
+                <label class="flex items-center gap-2 cursor-pointer bg-slate-900 p-3 rounded-lg flex-1 border border-slate-700">
+                    <input type="radio" name="hesap_tipi" value="alici" checked onchange="toggleEsnafFields(false)">
+                    <span>Alıcı (İlan Veren)</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer bg-slate-900 p-3 rounded-lg flex-1 border border-slate-700">
+                    <input type="radio" name="hesap_tipi" value="esnaf" onchange="toggleEsnafFields(true)">
+                    <span>Esnaf (Satıcı)</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Esnaf Özel Alanları (Sadece Esnaf Seçilirse Görünecek) -->
+        <div id="esnaf-fields" class="hidden">
+            <div class="mb-4">
+                <label class="block text-sm font-medium mb-1">Vergi Numarası (Opsiyonel)</label>
+                <input type="text" id="vergi_no" placeholder="1234567890" class="w-full p-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium mb-1">Dükkan Adresi / Konumu</label>
+                <textarea id="dukan_adresi" placeholder="Oto Sanayi Sitesi..." class="w-full p-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500 h-20"></textarea>
+            </div>
+        </div>
+
+        <!-- Butonlar -->
+        <button id="btn-main" onclick="handleAuth()" class="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-900 font-bold p-3 rounded-lg transition duration-200 mt-2">Giriş Yap</button>
+        
+        <p id="toggle-text" class="text-sm text-center text-slate-400 mt-4 cursor-pointer hover:text-white" onclick="switchForm()">Hesabınız yok mu? Kayıt Olun</p>
+    </div>
+
+    <script>
+        let isLogin = true;
+
+        function switchForm() {
+            isLogin = !isLogin;
+            document.getElementById('form-title').innerText = isLogin ? 'Giriş Yap' : 'Kayıt Ol';
+            document.getElementById('btn-main').innerText = isLogin ? 'Giriş Yap' : 'Kayıt Ol';
+            document.getElementById('toggle-text').innerText = isLogin ? 'Hesabınız yok mu? Kayıt Olun' : 'Zaten hesabınız var mı? Giriş Yapın';
+            
+            if(isLogin) {
+                document.getElementById('name-area').classList.add('hidden');
+                document.getElementById('type-area').classList.add('hidden');
+                document.getElementById('esnaf-fields').classList.add('hidden');
+            } else {
+                document.getElementById('name-area').classList.remove('hidden');
+                document.getElementById('type-area').classList.remove('hidden');
+                let isEsnaf = document.querySelector('input[name="hesap_tipi"]:checked').value === 'esnaf';
+                toggleEsnafFields(isEsnaf);
+            }
+        }
+
+        function toggleEsnafFields(show) {
+            if(show && !isLogin) {
+                document.getElementById('esnaf-fields').classList.remove('hidden');
+            } else {
+                document.getElementById('esnaf-fields').classList.add('hidden');
+            }
+        }
+
+        async function handleAuth() {
+            const telefon = document.getElementById('tel').value;
+            const sifre = document.getElementById('sifre').value;
+            
+            if(!telefon || !sifre) return alert('Lütfen gerekli alanları doldurun.');
+
+            if(isLogin) {
+                alert('Giriş sistemi entegre ediliyor. Backend aktif!');
+            } else {
+                const ad_soyad = document.getElementById('ad_soyad').value;
+                const hesap_tipi = document.querySelector('input[name="hesap_tipi"]:checked').value;
+                const vergi_no = document.getElementById('vergi_no').value;
+                const dukan_adresi = document.getElementById('dukan_adresi').value;
+
+                const response = await fetch('/api/kayit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ telefon, sifre, ad_soyad, hesap_tipi, vergi_no, dukan_adresi })
+                });
+                const result = await response.json();
+                if(response.ok) {
+                    alert('Kayıt Başarılı! Şimdi giriş yapabilirsiniz.');
+                    switchForm();
+                } else {
+                    alert('Hata: ' + (result.error || 'Kayıt başarısız.'));
+                }
+            }
+        }
+    </script>
+</body>
+</html>
