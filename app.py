@@ -7,14 +7,15 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASE_DIR, 'parca_ve_esya.db')
+# Render sunucusunda klasör izin hatası almamak için veri tabanını /tmp altına taşıdık
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/parca_ve_esya.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'cok-gizli-bir-anahtar-12345'
 
 db = SQLAlchemy(app)
 
 class User(db.Model):
+    id = db.Model.dataclass if hasattr(db.Model, 'dataclass') else db.Column(db.Integer, primary_key=True)
     id = db.Column(db.Integer, primary_key=True)
     telefon = db.Column(db.String(15), unique=True, nullable=False)
     sifre_hash = db.Column(db.String(128), nullable=False)
