@@ -3,14 +3,15 @@ from flask import Flask, request, redirect, url_for, session, render_template_st
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'ilan_uygulamasi_kesin_gizli_anahtar_123'
+
+# Sunucunun kilitlenmesini önleyen en kritik ayar (Oturum şifreleme anahtarı)
+app.config['SECRET_KEY'] = 'ilan_uygulamasi_kalici_ve_kesin_gizli_anahtar_9988'
 
 # Verileri geçici olarak RAM bellekte saklıyoruz
 USERS_DB = {}
 ILANLAR_DB = []
-TEKLIFLER_DB = []
 
-# Hazır Test Kullanıcıları
+# Hazır Giriş Bilgileri
 USERS_DB["05551234567"] = {
     "ad_soyad": "Ahmet Yilmaz",
     "sifre_hash": generate_password_hash("123456"),
@@ -22,7 +23,7 @@ USERS_DB["05441234567"] = {
     "hesap_tipi": "esnaf"
 }
 
-# --- TEMEL ARAYÜZLER (Yalın ve Hatasız HTML) ---
+# --- TEMEL ARAYÜZLER (Hatasız Yalın HTML) ---
 LOGIN_HTML = """
 <body style="background:#0b1329; color:white; font-family:sans-serif; text-align:center; padding-top:50px;">
     <h2>Ilan Uygulamasi - Giris Yap</h2>
@@ -58,21 +59,24 @@ ILANLAR_HTML = """
 <body style="background:#0b1329; color:white; font-family:sans-serif; padding:20px;">
     <div style="max-width:600px; margin:0 auto; background:#1c2541; padding:20px; border-radius:10px;">
         <h3>Hos geldiniz, {{ session['ad_soyad'] }} ({{ session['hesap_tipi'].upper() }})</h3>
-        <a href="/logout" style="color:red; float:right;">Cikis Yap</a><br><br>
+        <a href="/logout" style="color:red; float:right; font-weight:bold; text-decoration:none;">Cikis Yap</a><br><br>
         
         {% if session['hesap_tipi'] == 'alici' %}
             <form method="POST" action="/yeni-ilan" style="background:#3a506b; padding:15px; border-radius:8px; margin-bottom:20px;">
                 <h4>Yeni Parca Talebi Olustur</h4>
                 <input type="text" name="kategori" placeholder="Parca Adi / Kategori" required style="padding:8px; margin:5px; width:90%;"><br>
-                <input type="text" name="detay" placeholder="Ilan Detayi (Orijinal cikma parca vb.)" required style="padding:8px; margin:5px; width:90%;"><br>
+                <input type="text" name="detay" placeholder="Ilan Detayi" required style="padding:8px; margin:5px; width:90%;"><br>
                 <input type="text" name="butce" placeholder="Butce (Orn: 3000 TL)" required style="padding:8px; margin:5px; width:90%;"><br>
-                <button type="submit" style="padding:8px 15px; background:#4cc9f0; border:none; font-weight:bold;">Ilan Ver</button>
+                <button type="submit" style="padding:8px 15px; background:#4cc9f0; border:none; font-weight:bold; cursor:pointer;">Ilan Ver</button>
             </form>
         {% endif %}
 
         <h4>Mevcut Ilanlar</h4>
+        {% if not ilanlar %}
+            <p style="color:#abc4ff; font-size:14px; margin-top:10px;">Henuz hic ilan verilmemis.</p>
+        {% endif %}
         {% for ilan in ilanlar %}
-            <div style="background:#0b1329; padding:15px; border-radius:8px; margin-bottom:15px;">
+            <div style="background:#0b1329; padding:15px; border-radius:8px; margin-bottom:15px; border:1px solid #3a506b;">
                 <p><b>Parca:</b> {{ ilan.kategori }} | <b>Butce:</b> {{ ilan.butce }}</p>
                 <p><b>Detay:</b> {{ ilan.detay }}</p>
                 <p style="font-size:12px; color:#abc4ff;">Ilan Sahibi: {{ ilan.ad_soyad }}</p>
