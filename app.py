@@ -587,7 +587,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Parça İste — Araç Aksesuar ve Modifiye Parça Talep Pazarı</title>
+<title>Parça İste | Araç Parçası İçin Teklif Pazarı</title>
 <meta name="description" content="Tersine ilan pazarı: aracın için aradığın aksesuar veya modifiye parçasını ücretsiz ilan et, aksesuarcı ve modifiye ustaları sana teklif versin.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -666,6 +666,13 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .feature-card{transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease}
   .feature-card:hover{transform:translateY(-3px);box-shadow:0 14px 35px rgba(27,29,33,.08);border-color:rgba(242,167,27,.45)}
   .sim-cursor{display:inline-block;width:7px;height:1em;background:var(--accent);vertical-align:-2px;animation:blink .8s infinite}@keyframes blink{50%{opacity:0}}
+  .mega-search{box-shadow:0 25px 80px rgba(27,29,33,.18),0 3px 0 rgba(242,167,27,.25)}
+  .mega-search:focus-within{border-color:rgba(242,167,27,.8);transform:translateY(-2px)}
+  .search-chip{transition:.18s ease}.search-chip:hover{transform:translateY(-1px);background:#1B1D21;color:#fff}
+  .pulse-ring{animation:ring 2s infinite}@keyframes ring{0%{box-shadow:0 0 0 0 rgba(242,167,27,.35)}70%{box-shadow:0 0 0 12px rgba(242,167,27,0)}100%{box-shadow:0 0 0 0 rgba(242,167,27,0)}}
+  .trust-card{transition:.2s ease}.trust-card:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(0,0,0,.06)}
+  .sim-progress{height:3px;background:rgba(255,255,255,.12);overflow:hidden;border-radius:99px}.sim-progress>span{display:block;height:100%;width:0;background:var(--accent);transition:width .2s linear}
+
 </style>
 </head>
 <body class="font-body bg-paper text-ink">
@@ -714,19 +721,26 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <p class="text-steel max-w-2xl mx-auto mt-5 text-base sm:text-lg">Parça İste, klasik ilan sitelerinin tersine çalışır: ihtiyacını yayınlarsın; aksesuarcılar ve modifiye ustaları sana fiyat verir.</p>
     </div>
 
-    <div class="max-w-4xl mx-auto mt-8 hero-fade d2">
-      <div class="bg-white rounded-3xl border-2 border-ink/10 shadow-2xl p-2 sm:p-3">
+    <div class="max-w-5xl mx-auto mt-8 hero-fade d2">
+      <div class="mega-search bg-white rounded-[28px] border-2 border-ink/10 p-2 sm:p-3 transition-all">
         <div class="flex items-center gap-2 sm:gap-3">
-          <div class="w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-ink text-accent flex items-center justify-center shrink-0"><i class="fa-solid fa-magnifying-glass text-lg sm:text-xl"></i></div>
+          <div class="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-ink text-accent flex items-center justify-center shrink-0 pulse-ring"><i class="fa-solid fa-magnifying-glass text-xl sm:text-2xl"></i></div>
           <div class="min-w-0 flex-1 text-left">
-            <div class="text-[10px] sm:text-xs font-bold text-steel uppercase tracking-widest">CANLI AKIŞ · UYGULAMA NASIL ÇALIŞIYOR?</div>
-            <div id="live-story" class="font-display font-semibold text-sm sm:text-lg truncate">Önce aracını seçiyorsun…</div>
+            <div class="text-[10px] sm:text-xs font-bold text-accentdark uppercase tracking-widest">CANLI AKIŞ · PARÇA İSTE'Yİ DENE</div>
+            <div id="live-story" class="font-display font-bold text-base sm:text-xl truncate">“2018 Golf için LED far arıyorum…”</div>
+            <div class="sim-progress mt-2"><span id="story-progress"></span></div>
           </div>
-          <button onclick="startLiveSimulation(true)" class="hidden sm:flex items-center gap-2 px-5 py-4 rounded-2xl bg-accent text-ink font-bold hover:bg-accentdark hover:text-white transition"><i class="fa-solid fa-play"></i> Canlı Simülasyonu Başlat</button>
+          <button onclick="startLiveSimulation(true)" class="hidden sm:flex items-center gap-2 px-5 py-4 rounded-2xl bg-accent text-ink font-bold hover:bg-accentdark hover:text-white transition"><i class="fa-solid fa-play"></i> Canlı Akışı Oynat</button>
           <button onclick="startLiveSimulation(true)" class="sm:hidden w-12 h-12 rounded-2xl bg-accent text-ink font-bold"><i class="fa-solid fa-play"></i></button>
         </div>
+        <div class="flex gap-2 overflow-x-auto pt-3 pb-1">
+          <button onclick="runSearchDemo('Golf LED far')" class="search-chip shrink-0 text-xs border border-black/10 rounded-full px-3 py-2">Golf LED far</button>
+          <button onclick="runSearchDemo('Clio body kit')" class="search-chip shrink-0 text-xs border border-black/10 rounded-full px-3 py-2">Clio body kit</button>
+          <button onclick="runSearchDemo('Egea 17 jant')" class="search-chip shrink-0 text-xs border border-black/10 rounded-full px-3 py-2">Egea 17 jant</button>
+          <button onclick="showView('seller')" class="search-chip shrink-0 text-xs border border-black/10 rounded-full px-3 py-2">Teklifleri gör</button>
+        </div>
       </div>
-      <div class="flex flex-wrap justify-center gap-3 mt-4 text-xs text-steel"><span><i class="fa-solid fa-keyboard mr-1"></i> Yazarken gerçek klavye efekti</span><span><i class="fa-solid fa-bolt mr-1"></i> Canlı işlem akışı</span><span><i class="fa-solid fa-shield-halved mr-1"></i> Telefon doğrulama</span></div>
+      <div class="flex flex-wrap justify-center gap-4 mt-4 text-xs text-steel"><span><i class="fa-solid fa-keyboard mr-1"></i> Klavye sesiyle yazılır</span><span><i class="fa-solid fa-wand-magic-sparkles mr-1"></i> AI ile doldur</span><span><i class="fa-solid fa-bolt mr-1"></i> Teklifler sana gelsin</span><span><i class="fa-solid fa-shield-halved mr-1"></i> Doğrulanmış kullanıcı</span></div>
     </div>
 
     <div class="max-w-5xl mx-auto mt-8 grid lg:grid-cols-5 gap-5 items-stretch">
@@ -752,6 +766,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="grid grid-cols-3 gap-3 max-w-5xl mx-auto mt-6"><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">81</div><div class="text-xs text-steel">il hedefleme</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">0₺</div><div class="text-xs text-steel">ilan ücreti</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">7/24</div><div class="text-xs text-steel">talep akışı</div></div></div>
   </div>
 
+
+  <div class="max-w-5xl mx-auto px-4 sm:px-6 pb-8">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="trust-card bg-white border border-black/10 rounded-2xl p-4"><i class="fa-solid fa-car-side text-accentdark"></i><div class="font-display font-bold mt-2">Araç Parçaları</div><div class="text-xs text-steel mt-1">Jant · far · body kit</div></div>
+      <div class="trust-card bg-white border border-black/10 rounded-2xl p-4"><i class="fa-solid fa-store text-success"></i><div class="font-display font-bold mt-2">Esnaf Ağı</div><div class="text-xs text-steel mt-1">Yerel teklif verenler</div></div>
+      <div class="trust-card bg-white border border-black/10 rounded-2xl p-4"><i class="fa-solid fa-comments text-ink"></i><div class="font-display font-bold mt-2">Teklif Karşılaştır</div><div class="text-xs text-steel mt-1">Fiyat + mesaj + işletme</div></div>
+      <div class="trust-card bg-white border border-black/10 rounded-2xl p-4"><i class="fa-solid fa-heart text-danger"></i><div class="font-display font-bold mt-2">Favoriler</div><div class="text-xs text-steel mt-1">Takip etmek istediğin talepler</div></div>
+    </div>
+  </div>
 
   <div class="bg-white border-y border-black/10">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 py-10 grid sm:grid-cols-2 gap-6">
@@ -1820,11 +1843,19 @@ function keySound(){
 function startLiveSimulation(manual=false){
   if(manual) try{keySound()}catch(e){}
   clearInterval(simTimer); let i=0; const textEl=document.getElementById('sim-text'), events=document.getElementById('sim-events'); if(!textEl||!events)return; events.innerHTML='';
-  const run=()=>{ if(i>=simScript.length){ clearInterval(simTimer); return; } const item=simScript[i++]; let pos=0; textEl.innerHTML='<span></span><i class="sim-cursor"></i>'; const span=textEl.querySelector('span'); const typer=setInterval(()=>{ if(pos<item.text.length){span.textContent+=item.text[pos++]; if(pos%2===0) keySound();}else{clearInterval(typer); const icon=item.role==='seller'?'fa-store':item.role==='system'?'fa-bolt':'fa-user'; const box=document.createElement('div'); box.className='ticker-item flex gap-2 items-center text-white/80 bg-white/5 rounded-lg px-3 py-2'; box.innerHTML=`<i class="fa-solid ${icon} text-accent w-4"></i><span>${item.text}</span>`; events.prepend(box); setTimeout(()=>{box.style.opacity='.75'},200); } },22); }; run(); simTimer=setInterval(run,2700);
+  const run=()=>{ if(i>=simScript.length){ clearInterval(simTimer); const bar=document.getElementById('story-progress'); if(bar)bar.style.width='100%'; return; } const item=simScript[i++]; const bar=document.getElementById('story-progress'); if(bar)bar.style.width=((i/simScript.length)*100)+'%'; let pos=0; textEl.innerHTML='<span></span><i class="sim-cursor"></i>'; const span=textEl.querySelector('span'); const typer=setInterval(()=>{ if(pos<item.text.length){span.textContent+=item.text[pos++]; if(pos%2===0) keySound();}else{clearInterval(typer); const icon=item.role==='seller'?'fa-store':item.role==='system'?'fa-bolt':'fa-user'; const box=document.createElement('div'); box.className='ticker-item flex gap-2 items-center text-white/80 bg-white/5 rounded-lg px-3 py-2'; box.innerHTML=`<i class="fa-solid ${icon} text-accent w-4"></i><span>${item.text}</span>`; events.prepend(box); setTimeout(()=>{box.style.opacity='.75'},200); } },22); }; run(); simTimer=setInterval(run,2700);
 }
 const liveMessages=['“Golf için LED far arıyorum” → 3 teklif geldi','“Clio body kit” talebi yayınlandı → Bursa ustalarına gidiyor','“Egea jant seti” → 2. teklif 18.500₺','Bir esnaf yeni talep havuzuna katıldı','Bir alıcı gelen 4 teklif arasından seçim yaptı'];
 let liveIndex=0;
 function rotateLiveStory(){const el=document.getElementById('live-story'); if(!el)return; el.style.opacity=0; setTimeout(()=>{el.textContent=liveMessages[liveIndex++%liveMessages.length];el.style.opacity=1},180)}
+let storyTimer=null;
+function runSearchDemo(query){
+  const el=document.getElementById('live-story'); if(!el)return;
+  clearInterval(storyTimer); el.textContent=''; let i=0; const bar=document.getElementById('story-progress');
+  const type=()=>{ if(i<query.length){el.textContent+=query[i++]; keySound(); if(bar)bar.style.width=(i/query.length*100)+'%'; } else { clearInterval(storyTimer); if(bar)bar.style.width='100%'; setTimeout(()=>{startLiveSimulation(true)},500); } };
+  storyTimer=setInterval(type,55); type();
+}
+
 
 // ==========================================================================
 // KAYIT / GİRİŞ
