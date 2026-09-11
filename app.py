@@ -1,42 +1,24 @@
 import os
 from flask import Flask, request, redirect, url_for, session, render_template_string
-from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
-base_dir = os.path.abspath(os.path.dirname(__file__))
-
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(base_dir, 'ilan_uygulamasi.db')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'ilan_uygulamasi_kesin_gizli_anahtar_123'
 
-db = SQLAlchemy(app)
-
 # ==========================================
-# 🗄️ VERİTABANI MODELLERİ
+# 🗄️ GEÇİCİ BELLEK VERİ SİSTEMİ (Render İzin Sorunlarını Aşmak İçin)
 # ==========================================
+# Sunucu izinlerine takılmamak için kullanıcıları RAM bellekte saklıyoruz
+USERS_DB = {}
 
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    telefon = db.Column(db.String(15), unique=True, nullable=False)
-    sifre_hash = db.Column(db.String(128), nullable=False)
-    ad_soyad = db.Column(db.String(100), nullable=False)
-    hesap_tipi = db.Column(db.String(20), nullable=False)
-    onayli_esnaf = db.Column(db.Boolean, default=False)
-    vergi_no = db.Column(db.String(50), nullable=True)
-    dukan_adresi = db.Column(db.Text, nullable=True)
-
-class Ilan(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    alici_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    kategori = db.Column(db.String(50), nullable=False)
-    marka = db.Column(db.String(50), nullable=True)
-    model = db.Column(db.String(50), nullable=True)
-    yil = db.Column(db.Integer, nullable=True)
-    detay = db.Column(db.Text, nullable=False)
-    il = db.Column(db.String(50), nullable=False)
-    ilce = db.Column(db.String(50), nullable=False)
-    butce = db.Column(db.String(50), nullable=False)
+# Test için varsayılan bir kullanıcı ekleyelim (Telefon: 05551234567 | Şifre: 123456)
+USERS_DB["05551234567"] = {
+    "ad_soyad": "Ahmet Yılmaz",
+    "sifre_hash": generate_password_hash("123456"),
+    "hesap_tipi": "alici",
+    "vergi_no": None,
+    "dukan_adresi": None
+}
 
 # ==========================================
 # 🎨 GÜVENLİ TASARIM ŞABLONLARI
@@ -166,7 +148,7 @@ REGISTER_HTML = """
 
 @app.route('/')
 def home():
-    if 'user_id' in session:
+    if 'telefon' in session:
         return redirect(url_for('ilanlar_sayfasi'))
     return redirect(url_for('login'))
 
@@ -176,10 +158,10 @@ def login():
         telefon = request.form.get('telefon')
         sifre = request.form.get('sifre')
         
-        user = User.query.filter_by(telefon=telefon).first()
-        if user and check_password_hash(user.sifre_hash, sifre):
-            session['user_id'] = user.id
-            session['ad_soyad'] = user.ad_soyad
+        user = USERS_DB.get(telefon)
+        if user and check_password_hash(user["sifre_hash"], sifre):
+            session['telefon'] = telefon
+            session['ad_soyad'] = user["ad_soyad"]
             return redirect(url_for('ilanlar_sayfasi'))
             
         return render_template_string(LOGIN_HTML, error="Hatalı telefon veya şifre!")
@@ -196,15 +178,32 @@ def register():
         vergi_no = request.form.get('vergi_no')
         dukkan_adresi = request.form.get('dukkan_adresi')
 
-        if User.query.filter_by(telefon=telefon).first():
+        if telefon in USERS_DB:
             return render_template_string(REGISTER_HTML, error="Bu telefon numarası zaten kayıtlı!")
 
-        hashed_sifre = generate_password_hash(sifre)
-        yeni_kullanici = User(
-            telefon=telefon, ad_soyad=ad_soyad, sifre_hash=hashed_sifre,
-            hesap_tipi=hesap_turu, vergi_no=vergi_no, dukan_adresi=dukkan_adresi
-        )
-        db.session.add(yeni_kullanici)
-        db.session.commit()
+        # Belleğe güvenli bir şekilde kaydediyoruz
+        USERS_DB[telefon] = {
+            "ad_soyad": ad_soyad,
+            "sifre_hash": generate_password_hash(sifre),
+            "hesap_tipi": hesap_turu,
+            "vergi_no": vergi_no if hesap_turu == 'esnaf' else None,
+            "dukan_adresi": dukkan_adresi if hesap_turu == 'esnaf' else None
+        }
         return redirect(url_for('login'))
         
+    return render_template_string(REGISTER_HTML)
+
+@app.route('/ilanlar')
+def ilanlar_sayfasi():
+    if 'telefon' not in session:
+        return redirect(url_for('login'))
+    return f"<body style='background-color:#0b1329; color:white; font-family:sans-serif; padding:30px;'><h1>Giriş Başarılı!</h1><h2>Hoş geldiniz, {session.get('ad_soyad')}</h2><p>İlanlar Sayfası ve panel fonksiyonları yakında eklenecek.</p><br><a href='/logout' style='color:#4cc9f0; text-decoration:none; font-weight:bold;'>Çıkış Yap</a></body>"
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
