@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="ParçaTeklif Reverse Marketplace", version="1.0.0")
 
-# Render için PORT dinamik olarak kullanılır: uvicorn main:app --host 0.0.0.0 --port $PORT
+# Render için PORT dinamik olarak kullanılır: uvicorn app:app --host 0.0.0.0 --port $PORT
 
 VEHICLES = {
     "Volkswagen": ["Golf", "Passat", "Polo", "Jetta", "Tiguan", "Caddy", "Transporter", "Amarok"],
@@ -171,4 +171,4 @@ init();
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
