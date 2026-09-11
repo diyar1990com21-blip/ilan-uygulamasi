@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PARÇA İSTE — Tersine İlan / İstek Pazarı (PRO v2)
+PARÇA İSTE — Tersine İlan / İstek Pazarı (PRO v5)
 ================================================
 Tek dosyalık FastAPI backend + gömülü HTML/Tailwind CSS frontend.
 
@@ -42,11 +42,13 @@ import random
 import string
 import uuid
 import hashlib
+import sqlite3
+import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, File, HTTPException, UploadFile, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 # ==========================================================================
@@ -288,7 +290,7 @@ class OfferCreateRequest(BaseModel):
 # 6) FASTAPI UYGULAMASI
 # ==========================================================================
 
-app = FastAPI(title="Parça İste — Tersine İlan Pazarı", version="2.0.0")
+app = FastAPI(title="Parça İste — Tersine İlan Pazarı", version="4.0.0")
 
 
 @app.get("/health")
@@ -404,7 +406,7 @@ def get_listing(listing_id: str, is_premium: bool = False) -> Dict[str, Any]:
 
 
 @app.post("/api/listings", status_code=201)
-def create_listing(payload: ListingCreateRequest) -> Dict[str, Any]:
+def create_listing(payload: ListingCreateRequest, request: Request) -> Dict[str, Any]:
     try:
         phone = normalize_phone(payload.phone)
     except ValueError as exc:
@@ -416,10 +418,14 @@ def create_listing(payload: ListingCreateRequest) -> Dict[str, Any]:
         )
     if payload.model not in CAR_DATA.get(payload.brand, []):
         raise HTTPException(status_code=400, detail="Model, seçilen markaya ait değil.")
+    owner = current_user(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="İlan vermek için giriş yapmalısın.")
 
     listing_id = new_id()
     listing = {
         "id": listing_id,
+        "owner_id": owner["id"],
         "brand": payload.brand,
         "model": payload.model,
         "year": payload.year,
@@ -442,18 +448,22 @@ def create_listing(payload: ListingCreateRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/listings/{listing_id}/offers", status_code=201)
-def create_offer(listing_id: str, payload: OfferCreateRequest) -> Dict[str, Any]:
+def create_offer(listing_id: str, payload: OfferCreateRequest, request: Request) -> Dict[str, Any]:
     listing = LISTINGS.get(listing_id)
     if not listing:
         raise HTTPException(status_code=404, detail="İlan bulunamadı.")
     if listing["status"] != "active":
         raise HTTPException(status_code=400, detail="Bu ilan artık aktif değil.")
+    seller_user = current_user(request)
+    if not seller_user:
+        raise HTTPException(status_code=401, detail="Teklif vermek için giriş yapmalısın.")
     try:
         seller_phone = normalize_phone(payload.seller_phone)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     offer = {
         "id": new_id(),
+        "seller_user_id": seller_user["id"],
         "seller_name": payload.seller_name.strip(),
         "seller_phone": seller_phone,
         "seller_phone_display": format_phone(seller_phone),
@@ -462,32 +472,43 @@ def create_offer(listing_id: str, payload: OfferCreateRequest) -> Dict[str, Any]
         "created_at": now_iso(),
     }
     listing["offers"].append(offer)
+    con=db(); owner_id=listing.get("owner_id")
+    if owner_id:
+        con.execute("INSERT INTO notifications(id,user_id,type,title,body,link,created_at) VALUES(?,?,?,?,?,?,?)",(uuid.uuid4().hex,"".join(owner_id),"offer","Yeni teklif",f"{seller_user['name']} {offer['price']:,.0f}₺ teklif verdi.".replace(",","."),f"/listing/{listing_id}",now_iso())); con.commit(); con.close()
     return offer
 
 
 @app.patch("/api/listings/{listing_id}/close")
-def close_listing(listing_id: str, payload: OtpSendRequest) -> Dict[str, Any]:
-    """Alıcı kendi ilanını kapatır (payload.phone == ilan sahibinin telefonu)."""
+def close_listing(listing_id: str, payload: OtpSendRequest, request: Request) -> Dict[str, Any]:
+    """Alıcı kendi ilanını kapatır; öncelik hesap sahipliği, eski akışta telefon da desteklenir."""
     listing = LISTINGS.get(listing_id)
     if not listing:
         raise HTTPException(status_code=404, detail="İlan bulunamadı.")
+    user=current_user(request)
     try:
-        phone = normalize_phone(payload.phone)
+        phone = normalize_phone(payload.phone) if payload.phone else ""
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    if phone != listing["phone"]:
+    allowed = bool(user and listing.get("owner_id") == user["id"]) or phone == listing["phone"]
+    if not allowed:
         raise HTTPException(status_code=403, detail="Bu ilanı kapatma yetkiniz yok.")
     listing["status"] = "closed"
     return {"success": True}
 
 
 @app.get("/api/my-listings")
-def my_listings(phone: str) -> List[Dict[str, Any]]:
-    try:
-        norm = normalize_phone(phone)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    items = [x for x in LISTINGS.values() if x["phone"] == norm]
+def my_listings(request: Request, phone: str = "") -> List[Dict[str, Any]]:
+    user=current_user(request)
+    if user:
+        items = [x for x in LISTINGS.values() if x.get("owner_id") == user["id"]]
+    elif phone:
+        try:
+            norm = normalize_phone(phone)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        items = [x for x in LISTINGS.values() if x["phone"] == norm]
+    else:
+        raise HTTPException(status_code=401, detail="Giriş yapmalısın.")
     items.sort(key=lambda x: x["created_at"], reverse=True)
     result = []
     for x in items:
@@ -522,56 +543,214 @@ def demo_feed() -> Dict[str, Any]:
         items.append(row)
     return {"items": items, "online": random.randint(38, 67), "today_listings": random.randint(84, 126), "today_offers": random.randint(173, 248)}
 
-# ==========================================================================
-# 8) BASİT HESAP SİSTEMİ — MVP / demo (kalıcı DB değildir)
-# ==========================================================================
-USERS: Dict[str, Dict[str, Any]] = {}
-SESSIONS: Dict[str, str] = {}
+# ============================================================================
+# 8) KALICI HESAP + MARKETPLACE VERİ KATMANI
+# ============================================================================
+# Üretim mantığı: kullanıcı oturumu HttpOnly cookie ile tutulur. SQLite,
+# DATABASE_PATH ile değiştirilebilir. Render'da kalıcılık için bu yolu bir
+# Persistent Disk'e bağlamak önerilir; DATABASE_URL varsa ileride Postgres'e
+# geçirilmesi kolay olacak şekilde tablolar ayrıştırılmıştır.
+DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "parca_iste.db"))
+SESSION_COOKIE = "parca_iste_session"
+SESSION_TTL_DAYS = 30
+
+def db():
+    con = sqlite3.connect(DB_PATH, timeout=20)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    return con
+
+def init_db():
+    con = db()
+    con.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'buyer',
+      phone TEXT DEFAULT '', city TEXT DEFAULT '', bio TEXT DEFAULT '',
+      avatar TEXT DEFAULT '', verified INTEGER DEFAULT 0, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS favorites (
+      user_id TEXT NOT NULL, listing_id TEXT NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY(user_id, listing_id)
+    );
+    CREATE TABLE IF NOT EXISTS saved_searches (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
+      query TEXT DEFAULT '', province TEXT DEFAULT '', brand TEXT DEFAULT '',
+      category TEXT DEFAULT '', notify INTEGER DEFAULT 1, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL,
+      title TEXT NOT NULL, body TEXT NOT NULL, link TEXT DEFAULT '',
+      read INTEGER DEFAULT 0, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY, listing_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+      receiver_id TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL,
+      read INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS profiles (
+      user_id TEXT PRIMARY KEY, business_name TEXT DEFAULT '',
+      city TEXT DEFAULT '', phone TEXT DEFAULT '', description TEXT DEFAULT '',
+      rating REAL DEFAULT 0, review_count INTEGER DEFAULT 0
+    );
+    """)
+    con.commit(); con.close()
+init_db()
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
+def safe_user(row):
+    if not row: return None
+    return {"id":row["id"],"name":row["name"],"email":row["email"],"role":row["role"],
+            "phone":row["phone"],"city":row["city"],"bio":row["bio"],"avatar":row["avatar"],
+            "verified":bool(row["verified"]),"created_at":row["created_at"]}
+
+def create_session(user_id: str):
+    token=secrets.token_urlsafe(48)
+    exp=(datetime.now(timezone.utc)).timestamp()+SESSION_TTL_DAYS*86400
+    expires=datetime.fromtimestamp(exp,tz=timezone.utc).isoformat()
+    con=db(); con.execute("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)",(token,user_id,expires)); con.commit(); con.close()
+    return token, expires
+
+def current_user_from_token(token: Optional[str]):
+    if not token: return None
+    con=db(); row=con.execute("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?",(token,datetime.now(timezone.utc).isoformat())).fetchone(); con.close()
+    return safe_user(row)
+
+def current_user(request: Request):
+    return current_user_from_token(request.cookies.get(SESSION_COOKIE))
+
+def require_user(request: Request):
+    user=current_user(request)
+    if not user: raise HTTPException(status_code=401, detail="Bu işlem için giriş yapmalısın.")
+    return user
+
 class AuthBody(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     email: str
-    password: str = Field(min_length=6, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
     role: str = "buyer"
-
 class LoginBody(BaseModel):
     email: str
     password: str
+class ProfileBody(BaseModel):
+    name: str = Field(min_length=2,max_length=80)
+    phone: str = ""
+    city: str = ""
+    bio: str = Field(default="",max_length=500)
+    business_name: str = Field(default="",max_length=120)
+class SaveSearchBody(BaseModel):
+    name: str = Field(min_length=2,max_length=80)
+    query: str = ""; province: str = ""; brand: str = ""; category: str = ""; notify: bool = True
+class MessageBody(BaseModel):
+    body: str = Field(min_length=1,max_length=1000)
 
 @app.post("/api/auth/register")
 def register_user(body: AuthBody):
-    email = body.email.strip().lower()
-    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
-        raise HTTPException(status_code=400, detail="Geçerli bir e-posta adresi gir.")
-    if email in USERS:
-        raise HTTPException(status_code=409, detail="Bu e-posta ile zaten bir hesap var.")
-    uid = uuid.uuid4().hex
-    USERS[email] = {"id": uid, "name": body.name.strip(), "email": email, "password": hash_password(body.password), "role": body.role if body.role in ("buyer","seller") else "buyer", "created_at": datetime.now(timezone.utc).isoformat()}
-    token = uuid.uuid4().hex
-    SESSIONS[token] = email
-    return {"token": token, "user": {k:v for k,v in USERS[email].items() if k != "password"}}
+    email=body.email.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$",email): raise HTTPException(400,"Geçerli bir e-posta adresi gir.")
+    role=body.role if body.role in ("buyer","seller") else "buyer"
+    con=db()
+    if con.execute("SELECT 1 FROM users WHERE email=?",(email,)).fetchone(): con.close(); raise HTTPException(409,"Bu e-posta ile zaten bir hesap var.")
+    uid=uuid.uuid4().hex
+    now=now_iso()
+    con.execute("INSERT INTO users(id,name,email,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",(uid,body.name.strip(),email,hash_password(body.password),role,now))
+    con.execute("INSERT INTO profiles(user_id,city) VALUES(?,?)",(uid,"")); con.commit(); con.close()
+    token,exp=create_session(uid)
+    user=current_user_from_token(token)
+    resp=JSONResponse({"success":True,"user":user})
+    resp.set_cookie(SESSION_COOKIE,token,max_age=SESSION_TTL_DAYS*86400,httponly=True,samesite="lax",secure=(os.environ.get("COOKIE_SECURE","1")!="0"),path="/")
+    return resp
 
 @app.post("/api/auth/login")
 def login_user(body: LoginBody):
-    email = body.email.strip().lower()
-    user = USERS.get(email)
-    if not user or user["password"] != hash_password(body.password):
-        raise HTTPException(status_code=401, detail="E-posta veya şifre hatalı.")
-    token = uuid.uuid4().hex
-    SESSIONS[token] = email
-    return {"token": token, "user": {k:v for k,v in user.items() if k != "password"}}
+    email=body.email.strip().lower(); con=db(); row=con.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone(); con.close()
+    if not row or row["password_hash"]!=hash_password(body.password): raise HTTPException(401,"E-posta veya şifre hatalı.")
+    token,exp=create_session(row["id"]); user=safe_user(row)
+    resp=JSONResponse({"success":True,"user":user}); resp.set_cookie(SESSION_COOKIE,token,max_age=SESSION_TTL_DAYS*86400,httponly=True,samesite="lax",secure=(os.environ.get("COOKIE_SECURE","1")!="0"),path="/"); return resp
+
+@app.post("/api/auth/logout")
+def logout_user(request: Request):
+    token=request.cookies.get(SESSION_COOKIE); con=db()
+    if token: con.execute("DELETE FROM sessions WHERE token=?",(token,)); con.commit()
+    con.close(); resp=JSONResponse({"success":True}); resp.delete_cookie(SESSION_COOKIE,path="/"); return resp
 
 @app.get("/api/auth/me")
-def auth_me(token: Optional[str] = None):
-    if not token or token not in SESSIONS:
-        raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
-    user = USERS.get(SESSIONS[token])
-    if not user:
-        raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
-    return {k:v for k,v in user.items() if k != "password"}
+def auth_me(request: Request):
+    user=current_user(request)
+    if not user: raise HTTPException(401,"Oturum bulunamadı.")
+    return user
+
+@app.get("/api/account/summary")
+def account_summary(request: Request):
+    user=require_user(request); con=db(); uid=user["id"]
+    fav=con.execute("SELECT COUNT(*) c FROM favorites WHERE user_id=?",(uid,)).fetchone()["c"]
+    saved=con.execute("SELECT COUNT(*) c FROM saved_searches WHERE user_id=?",(uid,)).fetchone()["c"]
+    unread=con.execute("SELECT COUNT(*) c FROM notifications WHERE user_id=? AND read=0",(uid,)).fetchone()["c"]
+    msgs=con.execute("SELECT COUNT(*) c FROM messages WHERE receiver_id=? AND read=0",(uid,)).fetchone()["c"]
+    con.close(); return {"favorites":fav,"saved_searches":saved,"unread_notifications":unread,"unread_messages":msgs}
+
+@app.put("/api/account/profile")
+def update_profile(body: ProfileBody, request: Request):
+    user=require_user(request); phone=""
+    if body.phone:
+        try: phone=normalize_phone(body.phone)
+        except ValueError as e: raise HTTPException(400,str(e))
+    con=db(); con.execute("UPDATE users SET name=?,phone=?,city=?,bio=? WHERE id=?",(body.name.strip(),phone,body.city.strip(),body.bio.strip(),user["id"]))
+    con.execute("UPDATE profiles SET business_name=?,city=?,phone=?,description=? WHERE user_id=?",(body.business_name.strip(),body.city.strip(),phone,body.bio.strip(),user["id"]))
+    con.commit(); row=con.execute("SELECT * FROM users WHERE id=?",(user["id"],)).fetchone(); con.close(); return safe_user(row)
+
+@app.post("/api/favorites/{listing_id}")
+def add_favorite(listing_id:str,request: Request):
+    user=require_user(request)
+    if listing_id not in LISTINGS: raise HTTPException(404,"İlan bulunamadı.")
+    con=db(); con.execute("INSERT OR IGNORE INTO favorites(user_id,listing_id,created_at) VALUES(?,?,?)",(user["id"],listing_id,now_iso())); con.commit(); con.close(); return {"success":True}
+@app.delete("/api/favorites/{listing_id}")
+def remove_favorite(listing_id:str,request: Request):
+    user=require_user(request); con=db(); con.execute("DELETE FROM favorites WHERE user_id=? AND listing_id=?",(user["id"],listing_id)); con.commit(); con.close(); return {"success":True}
+@app.get("/api/favorites")
+def favorites(request: Request):
+    user=require_user(request); con=db(); rows=con.execute("SELECT listing_id FROM favorites WHERE user_id=? ORDER BY created_at DESC",(user["id"],)).fetchall(); con.close()
+    return [_public_listing(LISTINGS[x["listing_id"]],False) for x in rows if x["listing_id"] in LISTINGS]
+
+@app.post("/api/saved-searches")
+def save_search(body:SaveSearchBody,request: Request):
+    user=require_user(request); con=db(); sid=uuid.uuid4().hex; con.execute("INSERT INTO saved_searches(id,user_id,name,query,province,brand,category,notify,created_at) VALUES(?,?,?,?,?,?,?,?,?)",(sid,user["id"],body.name,body.query,body.province,body.brand,body.category,int(body.notify),now_iso())); con.commit(); con.close(); return {"id":sid,"success":True}
+@app.get("/api/saved-searches")
+def saved_searches(request: Request):
+    user=require_user(request); con=db(); rows=con.execute("SELECT * FROM saved_searches WHERE user_id=? ORDER BY created_at DESC",(user["id"],)).fetchall(); con.close(); return [dict(r) for r in rows]
+@app.delete("/api/saved-searches/{sid}")
+def delete_saved_search(sid:str,request: Request):
+    user=require_user(request); con=db(); con.execute("DELETE FROM saved_searches WHERE id=? AND user_id=?",(sid,user["id"])); con.commit(); con.close(); return {"success":True}
+
+@app.get("/api/notifications")
+def notifications(request: Request):
+    user=require_user(request); con=db(); rows=con.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 50",(user["id"],)).fetchall(); con.close(); return [dict(r) for r in rows]
+@app.post("/api/notifications/read")
+def notifications_read(request: Request):
+    user=require_user(request); con=db(); con.execute("UPDATE notifications SET read=1 WHERE user_id=?",(user["id"],)); con.commit(); con.close(); return {"success":True}
+
+@app.get("/api/messages")
+def conversations(request: Request):
+    user=require_user(request); con=db(); rows=con.execute("SELECT * FROM messages WHERE sender_id=? OR receiver_id=? ORDER BY created_at DESC",(user["id"],user["id"])).fetchall(); con.close(); return [dict(r) for r in rows]
+@app.get("/api/listings/{listing_id}/messages")
+def listing_messages(listing_id:str,request: Request):
+    user=require_user(request); con=db(); rows=con.execute("SELECT * FROM messages WHERE listing_id=? AND (sender_id=? OR receiver_id=?) ORDER BY created_at",(listing_id,user["id"],user["id"])).fetchall(); con.close(); return [dict(r) for r in rows]
+@app.post("/api/listings/{listing_id}/messages")
+def send_message(listing_id:str,body:MessageBody,request: Request):
+    user=require_user(request); listing=LISTINGS.get(listing_id)
+    if not listing: raise HTTPException(404,"İlan bulunamadı.")
+    con=db(); owner=con.execute("SELECT id FROM users WHERE phone=? LIMIT 1",(listing["phone"],)).fetchone()
+    if not owner: con.close(); raise HTTPException(400,"İlan sahibinin hesabı bulunamadı.")
+    receiver=owner["id"]
+    if receiver==user["id"]: con.close(); raise HTTPException(400,"Kendi ilanına mesaj gönderemezsin.")
+    mid=uuid.uuid4().hex; con.execute("INSERT INTO messages(id,listing_id,sender_id,receiver_id,body,created_at) VALUES(?,?,?,?,?,?)",(mid,listing_id,user["id"],receiver,body.body.strip(),now_iso()))
+    con.execute("INSERT INTO notifications(id,user_id,type,title,body,link,created_at) VALUES(?,?,?,?,?,?,?)",(uuid.uuid4().hex,receiver,"message","Yeni mesaj",f"{user['name']} sana bir mesaj gönderdi.",f"/listing/{listing_id}",now_iso())); con.commit(); con.close(); return {"success":True,"id":mid}
 
 # ==========================================================================
 # 8) FRONTEND — Tek parça HTML / Tailwind CSS / Vanilla JS
@@ -691,9 +870,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <button onclick="showView('seller')" data-nav="seller" class="nav-btn">Teklif Havuzu</button>
       <button onclick="showView('mylistings')" data-nav="mylistings" class="nav-btn">İlanlarım</button>
     </nav>
-    <div class="hidden sm:flex items-center gap-2 ml-auto lg:ml-2">
+    <div id="auth-desktop" class="hidden sm:flex items-center gap-2 ml-auto lg:ml-2">
       <button onclick="openAuth('login')" class="px-3 py-2 rounded-lg text-sm font-semibold text-white/90 hover:bg-white/10"><i class="fa-solid fa-right-to-bracket mr-1"></i>Giriş Yap</button>
       <button onclick="openAuth('register')" class="px-4 py-2 rounded-lg bg-accent text-ink text-sm font-bold hover:bg-accentdark hover:text-white"><i class="fa-solid fa-user-plus mr-1"></i>Kayıt Ol</button>
+    </div>
+    <div id="user-desktop" class="hidden sm:flex items-center gap-2 ml-auto lg:ml-2">
+      <button onclick="toggleAccountMenu()" class="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/10">
+        <span id="header-avatar" class="w-8 h-8 rounded-full bg-accent text-ink flex items-center justify-center font-bold">P</span>
+        <span id="header-user-name" class="max-w-[130px] truncate text-sm font-semibold">Hesabım</span><i class="fa-solid fa-chevron-down text-xs"></i>
+      </button>
     </div>
     <button onclick="toggleMobileNav()" class="sm:hidden text-xl w-9 h-9 flex items-center justify-center" aria-label="Menü">
       <i class="fa-solid fa-bars"></i>
@@ -704,12 +889,16 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <button onclick="showView('buyer')" data-nav="buyer" class="nav-btn text-left">İlan Ver</button>
     <button onclick="showView('seller')" data-nav="seller" class="nav-btn text-left">Teklif Havuzu</button>
     <button onclick="showView('mylistings')" data-nav="mylistings" class="nav-btn text-left">İlanlarım</button>
-    <div class="grid grid-cols-2 gap-2 pt-2">
-      <button onclick="openAuth('login')" class="py-2 rounded-lg bg-white/10 text-white text-sm font-semibold">Giriş Yap</button>
-      <button onclick="openAuth('register')" class="py-2 rounded-lg bg-accent text-ink text-sm font-bold">Kayıt Ol</button>
-    </div>
+    <div id="mobile-auth-buttons" class="grid grid-cols-2 gap-2 pt-2"><button onclick="openAuth('login')" class="py-2 rounded-lg bg-white/10 text-white text-sm font-semibold">Giriş Yap</button><button onclick="openAuth('register')" class="py-2 rounded-lg bg-accent text-ink text-sm font-bold">Kayıt Ol</button></div><div id="mobile-user" class="hidden pt-2"><button onclick="showAccountPanel()" class="w-full py-2 rounded-lg bg-white/10 text-white text-sm font-semibold">Hesabım</button></div>
   </div>
 </header>
+
+<div id="account-menu" class="hidden fixed top-20 right-4 z-50 w-80 bg-white rounded-2xl border border-black/10 shadow-2xl p-3">
+  <div class="flex items-center gap-3 p-3 border-b border-black/10"><span id="menu-avatar" class="w-11 h-11 rounded-full bg-accent flex items-center justify-center font-bold">P</span><div class="min-w-0"><div id="menu-name" class="font-bold truncate">Hesabım</div><div id="menu-email" class="text-xs text-steel truncate"></div></div></div>
+  <div class="grid grid-cols-2 gap-2 p-3"><button onclick="openAccountSection('listings')" class="p-3 rounded-xl bg-paper text-left text-sm"><i class="fa-solid fa-bullhorn"></i><br>İlanlarım</button><button onclick="openAccountSection('favorites')" class="p-3 rounded-xl bg-paper text-left text-sm"><i class="fa-solid fa-heart"></i><br>Favorilerim</button><button onclick="openAccountSection('saved')" class="p-3 rounded-xl bg-paper text-left text-sm"><i class="fa-solid fa-bookmark"></i><br>Kayıtlı Aramalar</button><button onclick="openAccountSection('messages')" class="p-3 rounded-xl bg-paper text-left text-sm"><i class="fa-solid fa-comments"></i><br>Mesajlar</button></div>
+  <button onclick="openAccountSection('profile')" class="w-full text-left px-3 py-2 rounded-lg hover:bg-paper text-sm"><i class="fa-solid fa-user-gear mr-2"></i>Hesap ve Profil</button>
+  <button onclick="logoutUser()" class="w-full text-left px-3 py-2 rounded-lg hover:bg-danger/10 text-danger text-sm"><i class="fa-solid fa-right-from-bracket mr-2"></i>Güvenli Çıkış</button>
+</div>
 
 <main>
 <!-- ============================= ANA SAYFA ============================= -->
@@ -809,6 +998,16 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <button onclick="showView('seller')" class="shrink-0 px-5 py-3 rounded-lg bg-accent text-ink font-semibold hover:bg-accentdark hover:text-white">Esnaf Panelini Aç <i class="fa-solid fa-arrow-right ml-1"></i></button>
     </div>
   </div>
+</section>
+
+<!-- ============================= HESABIM ============================= -->
+<section id="view-account" class="hidden">
+ <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+  <div class="flex flex-col md:flex-row gap-5">
+   <aside class="md:w-64 bg-white rounded-2xl border border-black/10 p-3 h-fit"><div class="p-4 bg-ink text-white rounded-xl"><div id="account-avatar" class="w-12 h-12 rounded-full bg-accent text-ink flex items-center justify-center text-xl font-bold">P</div><div id="account-name" class="font-bold mt-3">Hesabım</div><div id="account-role" class="text-xs text-white/60 mt-1">Bireysel</div></div><div class="space-y-1 mt-3"><button onclick="openAccountSection('listings')" class="account-tab w-full text-left p-3 rounded-lg">İlanlarım</button><button onclick="openAccountSection('favorites')" class="account-tab w-full text-left p-3 rounded-lg">Favorilerim</button><button onclick="openAccountSection('saved')" class="account-tab w-full text-left p-3 rounded-lg">Kayıtlı Aramalar</button><button onclick="openAccountSection('messages')" class="account-tab w-full text-left p-3 rounded-lg">Mesajlar</button><button onclick="openAccountSection('notifications')" class="account-tab w-full text-left p-3 rounded-lg">Bildirimler</button><button onclick="openAccountSection('profile')" class="account-tab w-full text-left p-3 rounded-lg">Profil ve Güvenlik</button></div></aside>
+   <div class="flex-1"><div class="bg-white rounded-2xl border border-black/10 p-5"><div class="flex items-center justify-between"><div><h1 id="account-section-title" class="font-display text-2xl font-bold">İlanlarım</h1><p class="text-sm text-steel">Tüm hesap işlemlerin tek yerde.</p></div><button onclick="showView('buyer')" class="px-4 py-2 rounded-xl bg-accent font-bold">+ İlan Ver</button></div><div id="account-content" class="mt-6"></div></div></div>
+  </div>
+ </div>
 </section>
 
 <!-- ============================= ALICI: İLAN VER ============================= -->
@@ -1050,7 +1249,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <form id="auth-form" class="p-6 space-y-4" onsubmit="submitAuth(event)">
       <div id="auth-name-wrap" class="hidden"><label class="text-sm font-semibold">Ad Soyad</label><input id="auth-name" class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3" placeholder="Adınız Soyadınız"></div>
       <div><label class="text-sm font-semibold">E-posta</label><input id="auth-email" type="email" required class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3" placeholder="ornek@mail.com"></div>
-      <div><label class="text-sm font-semibold">Şifre</label><input id="auth-password" type="password" minlength="6" required class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3" placeholder="En az 6 karakter"></div>
+      <div><label class="text-sm font-semibold">Şifre</label><input id="auth-password" type="password" minlength="8" required class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3" placeholder="En az 6 karakter"></div>
       <div id="auth-role-wrap" class="hidden"><label class="text-sm font-semibold">Hesap tipi</label><select id="auth-role" class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3"><option value="buyer">Alıcı / Bireysel</option><option value="seller">Esnaf / Satıcı</option></select></div>
       <button id="auth-submit" class="w-full py-3 rounded-xl bg-ink text-white font-bold">Giriş Yap</button>
       <p id="auth-switch" class="text-center text-sm text-steel">Hesabın yok mu? <button type="button" onclick="openAuth('register')" class="font-bold text-accentdark">Kayıt ol</button></p>
@@ -1177,7 +1376,8 @@ async function loadDemoFeed() {
 // NAV / VIEW SWITCH
 // ==========================================================================
 function showView(name) {
-  ['home', 'buyer', 'seller', 'mylistings'].forEach(v => {
+  if (['buyer','seller','mylistings','account'].includes(name) && !currentUser) { openAuth('login'); return; }
+  ['home', 'buyer', 'seller', 'mylistings', 'account'].forEach(v => {
     document.getElementById('view-' + v).classList.toggle('hidden', v !== name);
   });
   document.querySelectorAll('[data-nav]').forEach(b => {
@@ -1186,6 +1386,7 @@ function showView(name) {
   document.getElementById('mobile-nav').classList.add('hidden');
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (name === 'seller') refreshListings();
+  if (name === 'account') { if (!currentUser) { openAuth('login'); return; } showAccountSection('listings'); }
 }
 function toggleMobileNav() {
   document.getElementById('mobile-nav').classList.toggle('hidden');
@@ -1570,7 +1771,7 @@ async function submitListing() {
   btn.disabled = true;
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Yayınlanıyor...';
   const payload = {
-    phone: wizard.phone, brand: wizard.brand, model: wizard.model,
+    phone: currentUser?.phone || wizard.phone, brand: wizard.brand, model: wizard.model,
     year: Number(wizard.year), engine_package: wizard.engine_package,
     color: wizard.color, part_category: wizard.part_category,
     description: wizard.description, province: wizard.province,
@@ -1857,19 +2058,37 @@ function runSearchDemo(query){
 }
 
 
-// ==========================================================================
-// KAYIT / GİRİŞ
-// ==========================================================================
+// ============================================================================
+// KAYIT / GİRİŞ / HESABIM — gerçek oturum (HttpOnly cookie)
+// ============================================================================
 let authMode='login';
-function openAuth(mode){authMode=mode; const modal=document.getElementById('auth-modal'); modal.classList.remove('hidden');modal.classList.add('flex'); document.getElementById('auth-name-wrap').classList.toggle('hidden',mode!=='register');document.getElementById('auth-role-wrap').classList.toggle('hidden',mode!=='register');document.getElementById('auth-title').textContent=mode==='login'?'Giriş Yap':'Ücretsiz Kayıt Ol';document.getElementById('auth-submit').textContent=mode==='login'?'Giriş Yap':'Hesap Oluştur';document.getElementById('auth-switch').innerHTML=mode==='login'?`Hesabın yok mu? <button type="button" onclick="openAuth('register')" class="font-bold text-accentdark">Kayıt ol</button>`:`Zaten hesabın var mı? <button type="button" onclick="openAuth('login')" class="font-bold text-accentdark">Giriş yap</button>`;document.getElementById('auth-msg').classList.add('hidden');}
+let currentUser=null;
+function openAuth(mode){authMode=mode; const modal=document.getElementById('auth-modal'); modal.classList.remove('hidden');modal.classList.add('flex'); document.getElementById('auth-name-wrap').classList.toggle('hidden',mode!=='register');document.getElementById('auth-role-wrap').classList.toggle('hidden',mode!=='register');document.getElementById('auth-title').textContent=mode==='login'?'Giriş Yap':'Ücretsiz Hesap Oluştur';document.getElementById('auth-submit').textContent=mode==='login'?'Giriş Yap':'Hesap Oluştur';document.getElementById('auth-switch').innerHTML=mode==='login'?`Hesabın yok mu? <button type="button" onclick="openAuth('register')" class="font-bold text-accentdark">Kayıt ol</button>`:`Zaten hesabın var mı? <button type="button" onclick="openAuth('login')" class="font-bold text-accentdark">Giriş yap</button>`;document.getElementById('auth-msg').classList.add('hidden');}
 function closeAuth(){const m=document.getElementById('auth-modal');m.classList.add('hidden');m.classList.remove('flex')}
-async function submitAuth(e){e.preventDefault(); const msg=document.getElementById('auth-msg'),btn=document.getElementById('auth-submit'); msg.classList.add('hidden');btn.disabled=true;btn.textContent='İşleniyor…'; try{let url,body;if(authMode==='register'){url='/api/auth/register';body={name:document.getElementById('auth-name').value,email:document.getElementById('auth-email').value,password:document.getElementById('auth-password').value,role:document.getElementById('auth-role').value}}else{url='/api/auth/login';body={email:document.getElementById('auth-email').value,password:document.getElementById('auth-password').value}} const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();if(!res.ok)throw new Error(data.detail||'İşlem başarısız');localStorage.setItem('parca_iste_token',data.token);localStorage.setItem('parca_iste_user',JSON.stringify(data.user));closeAuth();showToast(authMode==='login'?`Hoş geldin ${data.user.name}.`:`Hesabın oluşturuldu. Hoş geldin ${data.user.name}.`);updateAuthButton(data.user)}catch(err){msg.textContent=err.message;msg.className='text-sm text-center text-danger';msg.classList.remove('hidden')}finally{btn.disabled=false;btn.textContent=authMode==='login'?'Giriş Yap':'Hesap Oluştur'}}
-function updateAuthButton(user){document.querySelectorAll('[data-auth-user]').forEach(x=>x.textContent=user?user.name:'Giriş Yap')}
+async function submitAuth(e){e.preventDefault();const msg=document.getElementById('auth-msg'),btn=document.getElementById('auth-submit');msg.classList.add('hidden');btn.disabled=true;btn.textContent='İşleniyor…';try{let url=authMode==='register'?'/api/auth/register':'/api/auth/login';let body=authMode==='register'?{name:document.getElementById('auth-name').value,email:document.getElementById('auth-email').value,password:document.getElementById('auth-password').value,role:document.getElementById('auth-role').value}:{email:document.getElementById('auth-email').value,password:document.getElementById('auth-password').value};const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});const data=await res.json();if(!res.ok)throw new Error(data.detail||'İşlem başarısız');currentUser=data.user;closeAuth();applyLoggedInUI();showToast(authMode==='login'?`Hoş geldin ${currentUser.name}. Oturumun açık.`:`Hesabın oluşturuldu. Oturumun açık.`);showView('account');}catch(err){msg.textContent=err.message;msg.className='text-sm text-center text-danger';msg.classList.remove('hidden')}finally{btn.disabled=false;btn.textContent=authMode==='login'?'Giriş Yap':'Hesap Oluştur'}}
+async function restoreSession(){try{const res=await fetch('/api/auth/me',{credentials:'same-origin'});if(res.ok){currentUser=await res.json();applyLoggedInUI()}else{currentUser=null;applyLoggedOutUI()}}catch(e){applyLoggedOutUI()}}
+function applyLoggedInUI(){if(!currentUser)return;document.getElementById('auth-desktop')?.classList.add('hidden');document.getElementById('user-desktop')?.classList.remove('hidden');document.getElementById('mobile-auth-buttons')?.classList.add('hidden');document.getElementById('mobile-user')?.classList.remove('hidden');const initials=(currentUser.name||'P').trim().split(/\s+/).map(x=>x[0]).slice(0,2).join('').toUpperCase();['header-avatar','menu-avatar','account-avatar'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=initials});['header-user-name','menu-name','account-name'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=currentUser.name});const em=document.getElementById('menu-email');if(em)em.textContent=currentUser.email;const role=document.getElementById('account-role');if(role)role.textContent=currentUser.role==='seller'?'Esnaf / Satıcı':'Alıcı / Bireysel'}
+function applyLoggedOutUI(){document.getElementById('auth-desktop')?.classList.remove('hidden');document.getElementById('user-desktop')?.classList.add('hidden');document.getElementById('mobile-auth-buttons')?.classList.remove('hidden');document.getElementById('mobile-user')?.classList.add('hidden')}
+function toggleAccountMenu(){document.getElementById('account-menu').classList.toggle('hidden')}
+function showAccountPanel(){showView('account');document.getElementById('mobile-nav').classList.add('hidden')}
+async function logoutUser(){await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});currentUser=null;applyLoggedOutUI();document.getElementById('account-menu').classList.add('hidden');showView('home');showToast('Güvenli çıkış yapıldı.')}
+async function openAccountSection(section){document.getElementById('account-menu').classList.add('hidden');if(!currentUser){openAuth('login');return}showView('account');showAccountSection(section)}
+async function showAccountSection(section){if(!currentUser)return;const titles={listings:'İlanlarım',favorites:'Favorilerim',saved:'Kayıtlı Aramalar',messages:'Mesajlar',notifications:'Bildirimler',profile:'Profil ve Güvenlik'};document.getElementById('account-section-title').textContent=titles[section]||'Hesabım';const box=document.getElementById('account-content');box.innerHTML='<div class="py-10 text-center text-steel"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor…</div>';try{if(section==='listings'){const r=await fetch('/api/my-listings');const d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="border border-black/10 rounded-xl p-4 mb-3"><div class="flex justify-between gap-3"><b>${escapeHtml(x.brand)} ${escapeHtml(x.model)} · ${x.year}</b><span class="text-xs px-2 py-1 rounded bg-success/10 text-success">${x.status==='active'?'Aktif':'Kapalı'}</span></div><p class="text-sm text-steel mt-1">${escapeHtml(x.part_category)} · ${escapeHtml(x.province)}/${escapeHtml(x.district)}</p><p class="text-sm mt-2">${escapeHtml(x.description)}</p><div class="mt-3 text-sm font-semibold text-accentdark">${x.offer_count} teklif</div></div>`).join(''):'<div class="py-10 text-center text-steel">Henüz ilan yok. <button onclick="showView(\'buyer\')" class="text-accentdark font-bold">İlk ilanını ver.</button></div>'}
+else if(section==='favorites'){const r=await fetch('/api/favorites');const d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="border border-black/10 rounded-xl p-4 mb-3"><b>${escapeHtml(x.brand)} ${escapeHtml(x.model)} · ${x.year}</b><p class="text-sm text-steel">${escapeHtml(x.part_category)} · ${escapeHtml(x.province)}/${escapeHtml(x.district)}</p></div>`).join(''):'<div class="py-10 text-center text-steel">Henüz favorin yok.</div>'}
+else if(section==='saved'){const r=await fetch('/api/saved-searches');const d=await r.json();box.innerHTML=`<button onclick="quickSaveSearch()" class="mb-4 px-4 py-2 rounded-xl bg-accent font-bold">+ Aramayı Kaydet</button>`+(d.length?d.map(x=>`<div class="border border-black/10 rounded-xl p-4 mb-3 flex justify-between"><div><b>${escapeHtml(x.name)}</b><p class="text-xs text-steel">${escapeHtml(x.query||'Tüm talepler')} ${x.notify?'· Bildirim açık':''}</p></div><button onclick="deleteSavedSearch('${x.id}')" class="text-danger">Sil</button></div>`).join(''):'<div class="py-6 text-steel">Kayıtlı arama yok.</div>')}
+else if(section==='messages'){const r=await fetch('/api/messages');const d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="border border-black/10 rounded-xl p-4 mb-3"><div class="text-xs text-steel">${new Date(x.created_at).toLocaleString('tr-TR')}</div><p class="mt-1">${escapeHtml(x.body)}</p></div>`).join(''):'<div class="py-10 text-center text-steel">Henüz mesajın yok.</div>'}
+else if(section==='notifications'){const r=await fetch('/api/notifications');const d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="border border-black/10 rounded-xl p-4 mb-3 ${x.read?'':'bg-accent/10'}"><b>${escapeHtml(x.title)}</b><p class="text-sm mt-1">${escapeHtml(x.body)}</p></div>`).join(''):'<div class="py-10 text-center text-steel">Yeni bildirim yok.</div>';fetch('/api/notifications/read',{method:'POST'})}
+else if(section==='profile'){box.innerHTML=`<form onsubmit="saveProfile(event)" class="space-y-4"><div><label class="text-sm font-semibold">Ad Soyad</label><input id="profile-name" value="${escapeHtml(currentUser.name)}" class="mt-1 w-full border rounded-xl px-4 py-3"></div><div><label class="text-sm font-semibold">Telefon</label><input id="profile-phone" value="${escapeHtml(currentUser.phone||'')}" class="mt-1 w-full border rounded-xl px-4 py-3" placeholder="0532 111 22 33"></div><div><label class="text-sm font-semibold">Şehir</label><input id="profile-city" value="${escapeHtml(currentUser.city||'')}" class="mt-1 w-full border rounded-xl px-4 py-3"></div><div><label class="text-sm font-semibold">Hakkımda</label><textarea id="profile-bio" class="mt-1 w-full border rounded-xl px-4 py-3" rows="4">${escapeHtml(currentUser.bio||'')}</textarea></div><button class="px-5 py-3 rounded-xl bg-ink text-white font-bold">Bilgileri Kaydet</button></form>`}}
+catch(e){box.innerHTML='<div class="text-danger py-8">Bilgiler yüklenemedi.</div>'}}
+async function saveProfile(e){e.preventDefault();const r=await fetch('/api/account/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('profile-name').value,phone:document.getElementById('profile-phone').value,city:document.getElementById('profile-city').value,bio:document.getElementById('profile-bio').value})});const d=await r.json();if(!r.ok){showToast(d.detail||'Kaydedilemedi',true);return}currentUser=d;applyLoggedInUI();showToast('Profil güncellendi.')}
+async function quickSaveSearch(){const name=prompt('Arama adı','Golf LED far');if(!name)return;await fetch('/api/saved-searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,query:name,notify:true})});showAccountSection('saved')}
+async function deleteSavedSearch(id){await fetch('/api/saved-searches/'+id,{method:'DELETE'});showAccountSection('saved')}
 // ==========================================================================
 // INIT
 // ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
   boot();
+  restoreSession();
   loadDemoFeed();
   startLiveSimulation(false);
   rotateLiveStory();
