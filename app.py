@@ -3,7 +3,7 @@ from flask import Flask, request, render_template, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# Kesin Çözüm: Projenin sunucudaki kök dizin yolunu açıkça belirtiyoruz
+# Kök dizin yolunu sunucuya kesin olarak bildiriyoruz
 base_dir = os.path.abspath(os.path.dirname(__file__))
 
 app = Flask(
@@ -12,17 +12,14 @@ app = Flask(
     static_folder=os.path.join(base_dir, 'static')
 )
 
-# Kesin Çözüm: Veritabanı dosyasını kök dizinde kalıcı ve izin sorunu olmayan bir yere bağlıyoruz
+# Veritabanı dosya yolu ayarı
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(base_dir, 'ilan_uygulamasi.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = 'ilan_uygulamasi_kalici_ve_kesin_gizli_anahtar_9988'
+app.config['SECRET_KEY'] = 'ilan_uygulamasi_kesin_gizli_anahtar_123'
 
 db = SQLAlchemy(app)
 
-# ==========================================
-# 🗄️ VERİTABANI MODELLERİ
-# ==========================================
-
+# Modeller
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     telefon = db.Column(db.String(15), unique=True, nullable=False)
@@ -53,10 +50,7 @@ class Teklif(db.Model):
     aciklama = db.Column(db.Text, nullable=False)
     durum = db.Column(db.String(20), default='Beklemede')
 
-# ==========================================
-# 🛣️ SAYFA YÖNLENDİRMELERİ (ROUTES)
-# ==========================================
-
+# Sayfalar
 @app.route('/')
 def home():
     if 'user_id' in session:
@@ -68,17 +62,12 @@ def login():
     if request.method == 'POST':
         telefon = request.form.get('telefon')
         sifre = request.form.get('sifre')
-        
         user = User.query.filter_by(telefon=telefon).first()
-        
         if user and check_password_hash(user.sifre_hash, sifre):
             session['user_id'] = user.id
             session['ad_soyad'] = user.ad_soyad
-            session['hesap_tipi'] = user.hesap_tipi
             return redirect(url_for('ilanlar_sayfasi'))
-        
         return "Hatalı telefon numarası veya şifre!", 401
-        
     return render_template('login.html')
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -91,53 +80,25 @@ def register():
         vergi_no = request.form.get('vergi_no')
         dukkan_adresi = request.form.get('dukkan_adresi')
 
-        if not telefon or not sifre or not ad_soyad:
-            return "Lütfen zorunlu alanları doldurun!", 400
-
         if User.query.filter_by(telefon=telefon).first():
             return "Bu telefon numarası zaten kayıtlı!", 400
 
         hashed_sifre = generate_password_hash(sifre)
-        
         yeni_kullanici = User(
-            telefon=telefon,
-            ad_soyad=ad_soyad,
-            sifre_hash=hashed_sifre,
-            hesap_tipi=hesap_turu,
-            vergi_no=vergi_no if hesap_turu == 'esnaf' else None,
-            dukan_adresi=dukkan_adresi if hesap_turu == 'esnaf' else None
+            telefon=telefon, ad_soyad=ad_soyad, sifre_hash=hashed_sifre,
+            hesap_tipi=hesap_turu, vergi_no=vergi_no, dukan_adresi=dukkan_adresi
         )
-        
         db.session.add(yeni_kullanici)
         db.session.commit()
         return redirect(url_for('login'))
-        
     return render_template('register.html')
 
 @app.route('/ilanlar')
 def ilanlar_sayfasi():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    
-    tum_ilanlar = Ilan.query.all()
-    try:
-        return render_template('ilanlar.html', ilanlar=tum_ilanlar)
-    except:
-        try:
-            return render_template('dashboard.html', ilanlar=tum_ilanlar)
-        except:
-            return "Giriş başarılı! İlanlar paneli yükleniyor ancak HTML şablonu bulunamadı.", 200
+    return "<h1>Giriş Başarılı! İlanlar Sayfası Yakında Eklenecek.</h1>"
 
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
-# ==========================================
-# 🛠️ VERİTABANI VE SUNUCU BAŞLATMA
-# ==========================================
-
-# Sunucu her açıldığında kilitlenmeyi önleyen güvenli başlatma
 with app.app_context():
     db.create_all()
 
