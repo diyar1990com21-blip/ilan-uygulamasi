@@ -41,6 +41,7 @@ import re
 import random
 import string
 import uuid
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -522,6 +523,57 @@ def demo_feed() -> Dict[str, Any]:
     return {"items": items, "online": random.randint(38, 67), "today_listings": random.randint(84, 126), "today_offers": random.randint(173, 248)}
 
 # ==========================================================================
+# 8) BASİT HESAP SİSTEMİ — MVP / demo (kalıcı DB değildir)
+# ==========================================================================
+USERS: Dict[str, Dict[str, Any]] = {}
+SESSIONS: Dict[str, str] = {}
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+class AuthBody(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    email: str
+    password: str = Field(min_length=6, max_length=128)
+    role: str = "buyer"
+
+class LoginBody(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/auth/register")
+def register_user(body: AuthBody):
+    email = body.email.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Geçerli bir e-posta adresi gir.")
+    if email in USERS:
+        raise HTTPException(status_code=409, detail="Bu e-posta ile zaten bir hesap var.")
+    uid = uuid.uuid4().hex
+    USERS[email] = {"id": uid, "name": body.name.strip(), "email": email, "password": hash_password(body.password), "role": body.role if body.role in ("buyer","seller") else "buyer", "created_at": datetime.now(timezone.utc).isoformat()}
+    token = uuid.uuid4().hex
+    SESSIONS[token] = email
+    return {"token": token, "user": {k:v for k,v in USERS[email].items() if k != "password"}}
+
+@app.post("/api/auth/login")
+def login_user(body: LoginBody):
+    email = body.email.strip().lower()
+    user = USERS.get(email)
+    if not user or user["password"] != hash_password(body.password):
+        raise HTTPException(status_code=401, detail="E-posta veya şifre hatalı.")
+    token = uuid.uuid4().hex
+    SESSIONS[token] = email
+    return {"token": token, "user": {k:v for k,v in user.items() if k != "password"}}
+
+@app.get("/api/auth/me")
+def auth_me(token: Optional[str] = None):
+    if not token or token not in SESSIONS:
+        raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
+    user = USERS.get(SESSIONS[token])
+    if not user:
+        raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
+    return {k:v for k,v in user.items() if k != "password"}
+
+# ==========================================================================
 # 8) FRONTEND — Tek parça HTML / Tailwind CSS / Vanilla JS
 # ==========================================================================
 
@@ -613,6 +665,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   @keyframes slideIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
   .feature-card{transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease}
   .feature-card:hover{transform:translateY(-3px);box-shadow:0 14px 35px rgba(27,29,33,.08);border-color:rgba(242,167,27,.45)}
+  .sim-cursor{display:inline-block;width:7px;height:1em;background:var(--accent);vertical-align:-2px;animation:blink .8s infinite}@keyframes blink{50%{opacity:0}}
 </style>
 </head>
 <body class="font-body bg-paper text-ink">
@@ -625,12 +678,16 @@ INDEX_HTML = r"""<!DOCTYPE html>
       </span>
       Parça İste
     </button>
-    <nav class="hidden sm:flex items-center gap-1">
+    <nav class="hidden lg:flex items-center gap-1">
       <button onclick="showView('home')" data-nav="home" class="nav-btn">Ana Sayfa</button>
       <button onclick="showView('buyer')" data-nav="buyer" class="nav-btn">İlan Ver</button>
-      <button onclick="showView('seller')" data-nav="seller" class="nav-btn">Satıcı Paneli</button>
+      <button onclick="showView('seller')" data-nav="seller" class="nav-btn">Teklif Havuzu</button>
       <button onclick="showView('mylistings')" data-nav="mylistings" class="nav-btn">İlanlarım</button>
     </nav>
+    <div class="hidden sm:flex items-center gap-2 ml-auto lg:ml-2">
+      <button onclick="openAuth('login')" class="px-3 py-2 rounded-lg text-sm font-semibold text-white/90 hover:bg-white/10"><i class="fa-solid fa-right-to-bracket mr-1"></i>Giriş Yap</button>
+      <button onclick="openAuth('register')" class="px-4 py-2 rounded-lg bg-accent text-ink text-sm font-bold hover:bg-accentdark hover:text-white"><i class="fa-solid fa-user-plus mr-1"></i>Kayıt Ol</button>
+    </div>
     <button onclick="toggleMobileNav()" class="sm:hidden text-xl w-9 h-9 flex items-center justify-center" aria-label="Menü">
       <i class="fa-solid fa-bars"></i>
     </button>
@@ -638,96 +695,63 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <div id="mobile-nav" class="hidden sm:hidden flex flex-col gap-1 px-4 pb-3 border-t border-white/10 pt-2">
     <button onclick="showView('home')" data-nav="home" class="nav-btn text-left">Ana Sayfa</button>
     <button onclick="showView('buyer')" data-nav="buyer" class="nav-btn text-left">İlan Ver</button>
-    <button onclick="showView('seller')" data-nav="seller" class="nav-btn text-left">Satıcı Paneli</button>
+    <button onclick="showView('seller')" data-nav="seller" class="nav-btn text-left">Teklif Havuzu</button>
     <button onclick="showView('mylistings')" data-nav="mylistings" class="nav-btn text-left">İlanlarım</button>
+    <div class="grid grid-cols-2 gap-2 pt-2">
+      <button onclick="openAuth('login')" class="py-2 rounded-lg bg-white/10 text-white text-sm font-semibold">Giriş Yap</button>
+      <button onclick="openAuth('register')" class="py-2 rounded-lg bg-accent text-ink text-sm font-bold">Kayıt Ol</button>
+    </div>
   </div>
 </header>
 
 <main>
 <!-- ============================= ANA SAYFA ============================= -->
 <section id="view-home">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-10 sm:pt-16 pb-12 grid md:grid-cols-2 gap-10 items-center">
-    <div class="hero-fade">
-      <p class="inline-flex items-center gap-2 text-xs font-medium text-accentdark bg-accent/15 px-3 py-1 rounded-full mb-4">
-        <i class="fa-solid fa-arrows-rotate"></i> Tersine ilan pazarı
-      </p>
-      <h1 class="font-display font-bold text-3xl sm:text-4xl lg:text-5xl leading-tight mb-4">
-        Aksesuar ve modifiye parçayı<br>sen iste, usta teklif versin.
-      </h1>
-      <p class="text-steel text-base sm:text-lg mb-6 max-w-md">
-        Aracın için aradığın jant, body kit, LED far, ses sistemi veya herhangi bir
-        aksesuar / modifiye parçasını ücretsiz ilan et. Çevrendeki aksesuarcı ve
-        modifiye ustaları sana fiyat teklifi göndersin — arayan sen değil, teklif
-        veren onlar olsun.
-      </p>
-      <div class="flex flex-col sm:flex-row gap-3">
-        <button onclick="showView('buyer')" class="px-5 py-3 rounded-lg bg-accent text-ink font-semibold hover:bg-accentdark hover:text-white transition-colors">
-          <i class="fa-solid fa-bullhorn mr-2"></i>Ücretsiz İlan Ver
-        </button>
-        <button onclick="showView('seller')" class="px-5 py-3 rounded-lg bg-ink text-white font-semibold hover:bg-ink/90 transition-colors">
-          <i class="fa-solid fa-screwdriver-wrench mr-2"></i>Esnafım, Teklif Vermek İstiyorum
-        </button>
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-10">
+    <div class="text-center hero-fade">
+      <div class="inline-flex items-center gap-2 text-xs font-semibold text-accentdark bg-accent/15 px-3 py-1.5 rounded-full mb-4"><span class="live-dot"></span> CANLI PAZAR · ŞU ANDA AKIYOR</div>
+      <h1 class="font-display font-bold text-4xl sm:text-6xl lg:text-7xl leading-[.98] tracking-tight">Aradığını yaz.<br><span class="text-accentdark">Teklifler sana gelsin.</span></h1>
+      <p class="text-steel max-w-2xl mx-auto mt-5 text-base sm:text-lg">Parça İste, klasik ilan sitelerinin tersine çalışır: ihtiyacını yayınlarsın; aksesuarcılar ve modifiye ustaları sana fiyat verir.</p>
+    </div>
+
+    <div class="max-w-4xl mx-auto mt-8 hero-fade d2">
+      <div class="bg-white rounded-3xl border-2 border-ink/10 shadow-2xl p-2 sm:p-3">
+        <div class="flex items-center gap-2 sm:gap-3">
+          <div class="w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-ink text-accent flex items-center justify-center shrink-0"><i class="fa-solid fa-magnifying-glass text-lg sm:text-xl"></i></div>
+          <div class="min-w-0 flex-1 text-left">
+            <div class="text-[10px] sm:text-xs font-bold text-steel uppercase tracking-widest">CANLI AKIŞ · UYGULAMA NASIL ÇALIŞIYOR?</div>
+            <div id="live-story" class="font-display font-semibold text-sm sm:text-lg truncate">Önce aracını seçiyorsun…</div>
+          </div>
+          <button onclick="startLiveSimulation(true)" class="hidden sm:flex items-center gap-2 px-5 py-4 rounded-2xl bg-accent text-ink font-bold hover:bg-accentdark hover:text-white transition"><i class="fa-solid fa-play"></i> Canlı Simülasyonu Başlat</button>
+          <button onclick="startLiveSimulation(true)" class="sm:hidden w-12 h-12 rounded-2xl bg-accent text-ink font-bold"><i class="fa-solid fa-play"></i></button>
+        </div>
       </div>
-      <div class="flex gap-6 mt-8 text-sm text-steel">
-        <div><span class="font-display font-bold text-ink text-lg">20</span> marka</div>
-        <div><span class="font-display font-bold text-ink text-lg">81</span> il</div>
-        <div><span class="font-display font-bold text-ink text-lg">0₺</span> ilan ücreti</div>
+      <div class="flex flex-wrap justify-center gap-3 mt-4 text-xs text-steel"><span><i class="fa-solid fa-keyboard mr-1"></i> Yazarken gerçek klavye efekti</span><span><i class="fa-solid fa-bolt mr-1"></i> Canlı işlem akışı</span><span><i class="fa-solid fa-shield-halved mr-1"></i> Telefon doğrulama</span></div>
+    </div>
+
+    <div class="max-w-5xl mx-auto mt-8 grid lg:grid-cols-5 gap-5 items-stretch">
+      <div class="lg:col-span-3 bg-ink text-white rounded-3xl p-5 sm:p-7 demo-glow overflow-hidden relative">
+        <div class="absolute -right-20 -top-20 w-56 h-56 rounded-full bg-accent/20 blur-3xl"></div>
+        <div class="relative">
+          <div class="flex items-center justify-between mb-5"><div><div class="text-xs text-white/50">CANLI SİMÜLASYON</div><h2 class="font-display font-bold text-xl sm:text-2xl">Alıcı → Satıcı → Anlaşma</h2></div><span class="inline-flex items-center gap-2 text-xs bg-white/10 px-3 py-1.5 rounded-full"><span class="live-dot"></span> CANLI</span></div>
+          <div id="simulation-stage" class="bg-black/20 border border-white/10 rounded-2xl p-4 min-h-[245px]">
+            <div class="flex gap-3 items-start"><div class="w-9 h-9 rounded-xl bg-accent text-ink flex items-center justify-center"><i class="fa-solid fa-user"></i></div><div><div class="text-xs text-white/50">ALICI</div><div id="sim-text" class="font-mono text-sm sm:text-base leading-7">“2018 Golf 1.6 TDI için LED far arıyorum…”</div><div class="mt-3 flex gap-2 flex-wrap"><span class="text-[11px] bg-white/10 rounded-full px-2 py-1">Volkswagen Golf</span><span class="text-[11px] bg-white/10 rounded-full px-2 py-1">LED Far</span><span class="text-[11px] bg-white/10 rounded-full px-2 py-1">Bursa</span></div></div></div>
+            <div id="sim-events" class="mt-5 space-y-2 text-xs"></div>
+          </div>
+          <div class="mt-4 flex gap-2"><button onclick="startLiveSimulation(true)" class="flex-1 py-3 rounded-xl bg-accent text-ink font-bold">Tekrar Oynat</button><button onclick="showView('buyer')" class="flex-1 py-3 rounded-xl bg-white/10 font-semibold">Gerçek İlan Oluştur</button></div>
+        </div>
+      </div>
+      <div class="lg:col-span-2 space-y-3">
+        <div class="bg-white border border-black/10 rounded-2xl p-5"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-accent/15 text-accentdark flex items-center justify-center"><i class="fa-solid fa-bullhorn"></i></div><div><b>1 · İlanını oluştur</b><p class="text-xs text-steel mt-1">Araç + parça + konum + fotoğraf.</p></div></div></div>
+        <div class="bg-white border border-black/10 rounded-2xl p-5"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-success/10 text-success flex items-center justify-center"><i class="fa-solid fa-hand-holding-dollar"></i></div><div><b>2 · Ustalar teklif versin</b><p class="text-xs text-steel mt-1">Fiyat, mesaj ve işletme bilgisi gelir.</p></div></div></div>
+        <div class="bg-white border border-black/10 rounded-2xl p-5"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-ink/5 text-ink flex items-center justify-center"><i class="fa-solid fa-scale-balanced"></i></div><div><b>3 · Karşılaştır ve seç</b><p class="text-xs text-steel mt-1">Teklifleri gör, satıcıyla iletişime geç.</p></div></div></div>
+        <div class="bg-accent rounded-2xl p-5"><div class="text-xs font-bold uppercase tracking-widest text-ink/60">Hemen başla</div><div class="font-display font-bold text-xl mt-1">İlk talebin ücretsiz.</div><button onclick="openAuth('register')" class="mt-3 w-full py-3 rounded-xl bg-ink text-white font-bold">Ücretsiz Kayıt Ol</button></div>
       </div>
     </div>
 
-    <div class="hero-fade d2 bg-ink text-white rounded-2xl p-5 sm:p-6 demo-glow overflow-hidden relative">
-      <div class="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-accent/20 blur-2xl"></div>
-      <div class="relative">
-        <div class="flex items-center justify-between mb-5">
-          <div>
-            <p class="text-xs text-white/60">CANLI DEMO</p>
-            <p class="font-display font-bold text-lg">Platform şu anda çalışıyor</p>
-          </div>
-          <span class="inline-flex items-center gap-2 text-xs bg-white/10 px-3 py-1.5 rounded-full"><span class="live-dot"></span><span id="demo-online">47 kişi çevrimiçi</span></span>
-        </div>
-        <div class="grid grid-cols-3 gap-2 mb-4">
-          <div class="bg-white/10 rounded-xl p-3"><p class="text-xl font-display font-bold" id="demo-listings">96</p><p class="text-[11px] text-white/60">bugünkü ilan</p></div>
-          <div class="bg-white/10 rounded-xl p-3"><p class="text-xl font-display font-bold" id="demo-offers">214</p><p class="text-[11px] text-white/60">teklif</p></div>
-          <div class="bg-white/10 rounded-xl p-3"><p class="text-xl font-display font-bold">0₺</p><p class="text-[11px] text-white/60">ilan ücreti</p></div>
-        </div>
-        <div class="bg-white rounded-xl p-4 text-ink">
-          <div class="flex items-center justify-between mb-3"><p class="text-xs font-semibold text-steel">Son hareketler</p><span class="text-[10px] text-success font-semibold">● CANLI</span></div>
-          <div id="demo-feed" class="space-y-2">
-            <div class="h-11 rounded-lg bg-paper animate-pulse"></div>
-            <div class="h-11 rounded-lg bg-paper animate-pulse"></div>
-          </div>
-        </div>
-        <div class="mt-4 flex gap-2">
-          <button onclick="showView('buyer')" class="flex-1 py-2.5 rounded-lg bg-accent text-ink font-semibold text-sm hover:bg-accentdark hover:text-white">Hemen İlan Ver</button>
-          <button onclick="showView('seller')" class="flex-1 py-2.5 rounded-lg bg-white/10 text-white font-semibold text-sm hover:bg-white/15">Teklif Havuzunu Gör</button>
-        </div>
-      </div>
-    </div>
-      <div class="space-y-6">
-        <div class="flex gap-4">
-          <div class="w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center font-display font-semibold text-sm shrink-0">1</div>
-          <div>
-            <p class="font-medium">Talebini ücretsiz paylaş</p>
-            <p class="text-sm text-steel mt-0.5">Aracını seç, aradığın aksesuar veya modifiye parçasını anlat — istersen fotoğrafını yükle, yapay zekâ formu senin yerine doldursun.</p>
-          </div>
-        </div>
-        <div class="flex gap-4">
-          <div class="w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center font-display font-semibold text-sm shrink-0">2</div>
-          <div>
-            <p class="font-medium">Esnaf sana teklif versin</p>
-            <p class="text-sm text-steel mt-0.5">Bölgendeki aksesuarcı ve modifiye ustaları talebini görür, gizli fiyat teklifi gönderir.</p>
-          </div>
-        </div>
-        <div class="flex gap-4">
-          <div class="w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center font-display font-semibold text-sm shrink-0">3</div>
-          <div>
-            <p class="font-medium">En iyi teklifi sen seç</p>
-            <p class="text-sm text-steel mt-0.5">Gelen teklifleri "İlanlarım" sayfandan karşılaştır, uygun olanı arayıp anlaş.</p>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div class="grid grid-cols-3 gap-3 max-w-5xl mx-auto mt-6"><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">81</div><div class="text-xs text-steel">il hedefleme</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">0₺</div><div class="text-xs text-steel">ilan ücreti</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">7/24</div><div class="text-xs text-steel">talep akışı</div></div></div>
   </div>
+
 
   <div class="bg-white border-y border-black/10">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 py-10 grid sm:grid-cols-2 gap-6">
@@ -996,6 +1020,21 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div id="my-listings-result"></div>
   </div>
 </section>
+
+<div id="auth-modal" class="hidden fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm p-4 items-center justify-center">
+  <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+    <div class="p-6 border-b border-black/10 flex items-center justify-between"><div><div class="text-xs font-bold text-accentdark uppercase tracking-widest">PARÇA İSTE</div><h3 id="auth-title" class="font-display font-bold text-2xl mt-1">Giriş Yap</h3></div><button onclick="closeAuth()" class="w-9 h-9 rounded-full bg-paper"><i class="fa-solid fa-xmark"></i></button></div>
+    <form id="auth-form" class="p-6 space-y-4" onsubmit="submitAuth(event)">
+      <div id="auth-name-wrap" class="hidden"><label class="text-sm font-semibold">Ad Soyad</label><input id="auth-name" class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3" placeholder="Adınız Soyadınız"></div>
+      <div><label class="text-sm font-semibold">E-posta</label><input id="auth-email" type="email" required class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3" placeholder="ornek@mail.com"></div>
+      <div><label class="text-sm font-semibold">Şifre</label><input id="auth-password" type="password" minlength="6" required class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3" placeholder="En az 6 karakter"></div>
+      <div id="auth-role-wrap" class="hidden"><label class="text-sm font-semibold">Hesap tipi</label><select id="auth-role" class="mt-1 w-full border border-black/15 rounded-xl px-4 py-3"><option value="buyer">Alıcı / Bireysel</option><option value="seller">Esnaf / Satıcı</option></select></div>
+      <button id="auth-submit" class="w-full py-3 rounded-xl bg-ink text-white font-bold">Giriş Yap</button>
+      <p id="auth-switch" class="text-center text-sm text-steel">Hesabın yok mu? <button type="button" onclick="openAuth('register')" class="font-bold text-accentdark">Kayıt ol</button></p>
+      <p id="auth-msg" class="text-sm text-center hidden"></p>
+    </form>
+  </div>
+</div>
 </main>
 
 <!-- TEKLİF MODALI -->
@@ -1758,12 +1797,53 @@ async function closeMyListing(id) {
 }
 
 // ==========================================================================
+// ANA SAYFA CANLI SİMÜLASYONU + KLAVYE SESİ
+// ==========================================================================
+let simTimer = null;
+let audioCtx = null;
+const simScript = [
+  {role:'buyer', text:'“2018 Volkswagen Golf için LED far arıyorum…”'},
+  {role:'buyer', text:'Araç: Golf · 2018 · 1.6 TDI · Bursa'},
+  {role:'buyer', text:'Parça: LED / Xenon far seti · Bütçe: tekliflere açık'},
+  {role:'system', text:'İlan yayınlandı ✓ · Yakındaki ustalara bildiriliyor…'},
+  {role:'seller', text:'Yılmaz Oto Aksesuar → 4.750₺ teklif verdi'},
+  {role:'seller', text:'Bursa Modifiye Garage → 4.350₺ + montaj teklif etti'},
+  {role:'buyer', text:'Teklifler karşılaştırılıyor… En uygun teklif seçildi ✓'},
+  {role:'system', text:'İletişim açıldı · Alıcı ve satıcı artık görüşebilir.'}
+];
+function keySound(){
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type='square'; o.frequency.value=90+Math.random()*35; g.gain.value=.018; o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.025);
+  }catch(e){}
+}
+function startLiveSimulation(manual=false){
+  if(manual) try{keySound()}catch(e){}
+  clearInterval(simTimer); let i=0; const textEl=document.getElementById('sim-text'), events=document.getElementById('sim-events'); if(!textEl||!events)return; events.innerHTML='';
+  const run=()=>{ if(i>=simScript.length){ clearInterval(simTimer); return; } const item=simScript[i++]; let pos=0; textEl.innerHTML='<span></span><i class="sim-cursor"></i>'; const span=textEl.querySelector('span'); const typer=setInterval(()=>{ if(pos<item.text.length){span.textContent+=item.text[pos++]; if(pos%2===0) keySound();}else{clearInterval(typer); const icon=item.role==='seller'?'fa-store':item.role==='system'?'fa-bolt':'fa-user'; const box=document.createElement('div'); box.className='ticker-item flex gap-2 items-center text-white/80 bg-white/5 rounded-lg px-3 py-2'; box.innerHTML=`<i class="fa-solid ${icon} text-accent w-4"></i><span>${item.text}</span>`; events.prepend(box); setTimeout(()=>{box.style.opacity='.75'},200); } },22); }; run(); simTimer=setInterval(run,2700);
+}
+const liveMessages=['“Golf için LED far arıyorum” → 3 teklif geldi','“Clio body kit” talebi yayınlandı → Bursa ustalarına gidiyor','“Egea jant seti” → 2. teklif 18.500₺','Bir esnaf yeni talep havuzuna katıldı','Bir alıcı gelen 4 teklif arasından seçim yaptı'];
+let liveIndex=0;
+function rotateLiveStory(){const el=document.getElementById('live-story'); if(!el)return; el.style.opacity=0; setTimeout(()=>{el.textContent=liveMessages[liveIndex++%liveMessages.length];el.style.opacity=1},180)}
+
+// ==========================================================================
+// KAYIT / GİRİŞ
+// ==========================================================================
+let authMode='login';
+function openAuth(mode){authMode=mode; const modal=document.getElementById('auth-modal'); modal.classList.remove('hidden');modal.classList.add('flex'); document.getElementById('auth-name-wrap').classList.toggle('hidden',mode!=='register');document.getElementById('auth-role-wrap').classList.toggle('hidden',mode!=='register');document.getElementById('auth-title').textContent=mode==='login'?'Giriş Yap':'Ücretsiz Kayıt Ol';document.getElementById('auth-submit').textContent=mode==='login'?'Giriş Yap':'Hesap Oluştur';document.getElementById('auth-switch').innerHTML=mode==='login'?`Hesabın yok mu? <button type="button" onclick="openAuth('register')" class="font-bold text-accentdark">Kayıt ol</button>`:`Zaten hesabın var mı? <button type="button" onclick="openAuth('login')" class="font-bold text-accentdark">Giriş yap</button>`;document.getElementById('auth-msg').classList.add('hidden');}
+function closeAuth(){const m=document.getElementById('auth-modal');m.classList.add('hidden');m.classList.remove('flex')}
+async function submitAuth(e){e.preventDefault(); const msg=document.getElementById('auth-msg'),btn=document.getElementById('auth-submit'); msg.classList.add('hidden');btn.disabled=true;btn.textContent='İşleniyor…'; try{let url,body;if(authMode==='register'){url='/api/auth/register';body={name:document.getElementById('auth-name').value,email:document.getElementById('auth-email').value,password:document.getElementById('auth-password').value,role:document.getElementById('auth-role').value}}else{url='/api/auth/login';body={email:document.getElementById('auth-email').value,password:document.getElementById('auth-password').value}} const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();if(!res.ok)throw new Error(data.detail||'İşlem başarısız');localStorage.setItem('parca_iste_token',data.token);localStorage.setItem('parca_iste_user',JSON.stringify(data.user));closeAuth();showToast(authMode==='login'?`Hoş geldin ${data.user.name}.`:`Hesabın oluşturuldu. Hoş geldin ${data.user.name}.`);updateAuthButton(data.user)}catch(err){msg.textContent=err.message;msg.className='text-sm text-center text-danger';msg.classList.remove('hidden')}finally{btn.disabled=false;btn.textContent=authMode==='login'?'Giriş Yap':'Hesap Oluştur'}}
+function updateAuthButton(user){document.querySelectorAll('[data-auth-user]').forEach(x=>x.textContent=user?user.name:'Giriş Yap')}
+// ==========================================================================
 // INIT
 // ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
   boot();
   loadDemoFeed();
+  startLiveSimulation(false);
+  rotateLiveStory();
   setInterval(loadDemoFeed, 12000);
+  setInterval(rotateLiveStory, 3200);
   goToStep(1);
   document.getElementById('mode-free-btn').classList.add('mode-btn-active');
   document.getElementById('district-select').addEventListener('change', onDistrictChange);
