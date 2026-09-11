@@ -1,12 +1,11 @@
 import os
-from flask import Flask, request, render_template, redirect, url_for, session
+from flask import Flask, request, redirect, url_for, session, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
 base_dir = os.path.abspath(os.path.dirname(__file__))
 
 app = Flask(__name__)
-# Render sunucusunda kilitlenme yapmayan güvenli veritabanı yolu
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(base_dir, 'ilan_uygulamasi.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'ilan_uygulamasi_kesin_gizli_anahtar_123'
@@ -22,7 +21,7 @@ class User(db.Model):
     telefon = db.Column(db.String(15), unique=True, nullable=False)
     sifre_hash = db.Column(db.String(128), nullable=False)
     ad_soyad = db.Column(db.String(100), nullable=False)
-    hesap_tipi = db.Column(db.String(20), nullable=False) # 'alici' veya 'esnaf'
+    hesap_tipi = db.Column(db.String(20), nullable=False)
     onayli_esnaf = db.Column(db.Boolean, default=False)
     vergi_no = db.Column(db.String(50), nullable=True)
     dukan_adresi = db.Column(db.Text, nullable=True)
@@ -40,10 +39,10 @@ class Ilan(db.Model):
     butce = db.Column(db.String(50), nullable=False)
 
 # ==========================================
-# 🎨 İÇE GÖMÜLÜ ŞABLONLAR (GÜVENLİ TASARIMLAR)
+# 🎨 GÜVENLİ TASARIM ŞABLONLARI
 # ==========================================
 
-LOGIN_HTML_TEMPLATE = """
+LOGIN_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -86,7 +85,7 @@ LOGIN_HTML_TEMPLATE = """
 </html>
 """
 
-REGISTER_HTML_TEMPLATE = """
+REGISTER_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -183,9 +182,9 @@ def login():
             session['ad_soyad'] = user.ad_soyad
             return redirect(url_for('ilanlar_sayfasi'))
             
-        return render_template_string(LOGIN_HTML_TEMPLATE, error="Hatalı telefon veya şifre!")
+        return render_template_string(LOGIN_HTML, error="Hatalı telefon veya şifre!")
         
-    return render_template_string(LOGIN_HTML_TEMPLATE)
+    return render_template_string(LOGIN_HTML)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -198,10 +197,14 @@ def register():
         dukkan_adresi = request.form.get('dukkan_adresi')
 
         if User.query.filter_by(telefon=telefon).first():
-            return render_template_string(REGISTER_HTML_TEMPLATE, error="Bu telefon numarası zaten kayıtlı!")
+            return render_template_string(REGISTER_HTML, error="Bu telefon numarası zaten kayıtlı!")
 
         hashed_sifre = generate_password_hash(sifre)
         yeni_kullanici = User(
             telefon=telefon, ad_soyad=ad_soyad, sifre_hash=hashed_sifre,
             hesap_tipi=hesap_turu, vergi_no=vergi_no, dukan_adresi=dukkan_adresi
         )
+        db.session.add(yeni_kullanici)
+        db.session.commit()
+        return redirect(url_for('login'))
+        
