@@ -80,6 +80,9 @@ def register():
         vergi_no = request.form.get('vergi_no')
         dukkan_adresi = request.form.get('dukkan_adresi')
 
+        if not telefon or not sifre:
+            return "Telefon ve şifre zorunludur!", 400
+
         if User.query.filter_by(telefon=telefon).first():
             return "Bu telefon numarası zaten kayıtlı!", 400
 
