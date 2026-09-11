@@ -9,7 +9,7 @@ USERS_DB = {}
 ILANLAR_DB = []
 TEKLIFLER_DB = []
 
-# Hazır Test Kullanıcıları
+# Hazır Giriş Bilgileri
 USERS_DB["05551234567"] = {"ad_soyad": "Ahmet Yilmaz", "sifre": "123456", "hesap_tipi": "alici"}
 USERS_DB["05441234567"] = {"ad_soyad": "Oto Usta Garaj", "sifre": "123456", "hesap_tipi": "esnaf"}
 
@@ -21,10 +21,6 @@ ILANLAR_DB.append({
     "detay": "2018 model Golf sol on LED far ariyorum.",
     "butce": "7500 TL"
 })
-
-# ==========================================
-# ROTALAR (ROUTES)
-# ==========================================
 
 @app.route('/')
 def home():
@@ -43,18 +39,15 @@ def login():
             session['ad_soyad'] = user["ad_soyad"]
             session['hesap_tipi'] = user["hesap_tipi"]
             return redirect(url_for('ilanlar_sayfasi'))
-        
-        # Basit hata ekranı
         return "<h3>Hatali telefon veya sifre!</h3><br><a href='/login'>Geri Don</a>"
 
-    # Saf HTML Giriş Formu
     return '''
-    <body style="background:#0b1329; color:white; font-family:sans-serif; text-align:center; padding-top:10px;">
-        <div style="background:#1c2541; display:inline-block; padding:30px; border-radius:12px; margin-top:50px;">
+    <body style="background:#0b1329; color:white; font-family:sans-serif; text-align:center; padding-top:50px;">
+        <div style="background:#1c2541; display:inline-block; padding:30px; border-radius:12px;">
             <h2>Ilan Uygulamasi - Giris Yap</h2>
             <form method="POST" action="/login">
                 <input type="tel" name="telefon" placeholder="Telefon (05551234567)" required style="padding:10px; margin:10px; width:220px;"><br>
-                <input type="password" name="sifre" placeholder="Sifre (123456)" required style="padding:10px; margin:10px; width:220px;"><br>
+                <input type="password" name="sifre" placeholder="Sifre" required style="padding:10px; margin:10px; width:220px;"><br>
                 <button type="submit" style="padding:10px 20px; background:#4cc9f0; border:none; font-weight:bold;">Giris Yap</button>
             </form>
             <p>Hesabiniz yok mu? <a href="/register" style="color:#4cc9f0;">Kayit Olun</a></p>
@@ -76,10 +69,9 @@ def register():
         USERS_DB[telefon] = {"ad_soyad": ad_soyad, "sifre": sifre, "hesap_tipi": hesap_turu}
         return redirect(url_for('login'))
 
-    # Saf HTML Kayıt Formu
     return '''
-    <body style="background:#0b1329; color:white; font-family:sans-serif; text-align:center; padding-top:10px;">
-        <div style="background:#1c2541; display:inline-block; padding:30px; border-radius:12px; margin-top:50px;">
+    <body style="background:#0b1329; color:white; font-family:sans-serif; text-align:center; padding-top:50px;">
+        <div style="background:#1c2541; display:inline-block; padding:30px; border-radius:12px;">
             <h2>Yeni Hesap Olustur</h2>
             <form method="POST" action="/register">
                 <input type="tel" name="telefon" placeholder="Telefon Numarasi" required style="padding:10px; margin:10px; width:220px;"><br>
@@ -101,7 +93,6 @@ def ilanlar_sayfasi():
     if 'telefon' not in session:
         return redirect(url_for('login'))
     
-    # Jinja2 döngü kilitlenmelerini aşmak için HTML'i Python döngüsüyle inşa ediyoruz
     html_kod = f'''
     <body style="background:#0b1329; color:white; font-family:sans-serif; padding:20px;">
         <div style="max-width:600px; margin:0 auto; background:#1c2541; padding:20px; border-radius:12px;">
@@ -110,31 +101,28 @@ def ilanlar_sayfasi():
             <a href="/logout" style="color:#ff4d4d; font-weight:bold; float:right; text-decoration:none;">Cikis Yap</a><br><br>
     '''
 
-    # Eğer giriş yapan alıcı ise yeni ilan formu gösterilir
     if session['hesap_tipi'] == 'alici':
         html_kod += '''
         <form method="POST" action="/yeni-ilan" style="background:#2a3457; padding:15px; border-radius:8px; margin-bottom:20px;">
             <h4 style="margin:0 0 10px 0; color:#4cc9f0;">➕ Yeni Parca Talebi Olustur</h4>
             <input type="text" name="kategori" placeholder="Parca Adi / Kategori" required style="width:90%; padding:8px; margin:5px;"><br>
             <input type="text" name="butce" placeholder="Butce (Orn: 5000 TL)" required style="width:90%; padding:8px; margin:5px;"><br>
-            <input type="text" name="detay" placeholder="Ilan Detayi (Orn: Orijinal cikma)" required style="width:90%; padding:8px; margin:5px;"><br>
+            <input type="text" name="detay" placeholder="Ilan Detayi" required style="width:90%; padding:8px; margin:5px;"><br>
             <button type="submit" style="padding:8px 15px; background:#4cc9f0; border:none; font-weight:bold; cursor:pointer; margin:5px;">Ilan Yayinla</button>
         </form>
         '''
 
-    html_kod += "<h4>Aktif Parça Talepleri</h4>"
+    html_kod += "<h4>Aktif Parca Talepleri</h4>"
     
     if not ILANLAR_DB:
         html_kod += "<p style='color:#abc4ff;'>Henüz ilan bulunmuyor.</p>"
 
-    # Python tarafında ilanları ve teklifleri hatasız eşleştirip ekrana basıyoruz
     for ilan in ILANLAR_DB:
         html_kod += f'''
         <div style="background:#0b1329; padding:15px; border-radius:8px; margin-bottom:15px; border:1px solid #2a3457;">
             <p style="color:#4cc9f0; font-weight:bold;">🔧 {ilan['kategori']} | <span style="color:#52b788;">💰 {ilan['butce']}</span></p>
             <p style="background:#1c2541; padding:8px; border-radius:6px; font-size:14px;">{ilan['detay']}</p>
             <p style="font-size:11px; color:#abc4ff; margin:0;">📣 Ilan Sahibi: {ilan['ad_soyad']}</p>
-            
             <div style="margin-top:10px; border-top:1px dashed #2a3457; padding-top:8px;">
                 <p style="font-size:12px; color:#abc4ff; font-weight:bold; margin:0 0 5px 0;">GELEN TEKLIFLER</p>
         '''
@@ -154,7 +142,6 @@ def ilanlar_sayfasi():
             
         html_kod += "</div>"
 
-        # Eğer esnaf giriş yaptıysa teklif verme formu eklenir
         if session['hesap_tipi'] == 'esnaf':
             html_kod += f'''
             <form method="POST" action="/teklif-ver/{ilan['id']}" style="display:flex; gap:5px; margin-top:10px;">
@@ -167,7 +154,7 @@ def ilanlar_sayfasi():
         html_kod += "</div>"
 
     html_kod += "</div></body>"
-    return render_template_string(html_kod)
+    return html_kod
 
 @app.route('/yeni-ilan', methods=['POST'])
 def yeni_ilan():
