@@ -6,12 +6,14 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ilan_uygulamasi_kesin_gizli_anahtar_123'
 
 # ==========================================
-# 🗄️ GEÇİCİ BELLEK VERİ SİSTEMİ (Render İzin Sorunlarını Aşmak İçin)
+# 🗄️ GEÇİCİ BELLEK VERİ SİSTEMİ (RAM)
 # ==========================================
-# Sunucu izinlerine takılmamak için kullanıcıları RAM bellekte saklıyoruz
 USERS_DB = {}
+ILANLAR_DB = []
+TEKLIFLER_DB = []
 
-# Test için varsayılan bir kullanıcı ekleyelim (Telefon: 05551234567 | Şifre: 123456)
+# --- Test İçin Hazır Veriler ---
+# 1. Alıcı Kullanıcı
 USERS_DB["05551234567"] = {
     "ad_soyad": "Ahmet Yılmaz",
     "sifre_hash": generate_password_hash("123456"),
@@ -19,6 +21,28 @@ USERS_DB["05551234567"] = {
     "vergi_no": None,
     "dukan_adresi": None
 }
+# 2. Esnaf Kullanıcı
+USERS_DB["05441234567"] = {
+    "ad_soyad": "Oto Garaj Ustası",
+    "sifre_hash": generate_password_hash("123456"),
+    "hesap_tipi": "esnaf",
+    "vergi_no": "12345678",
+    "dukan_adresi": "Sanayi Sitesi No: 12"
+}
+# 3. Örnek İlan
+ILANLAR_DB.append({
+    "id": 1,
+    "alici_id": "05551234567",
+    "ad_soyad": "Ahmet Yılmaz",
+    "kategori": "Oto Yedek Parça",
+    "marka": "Toyota",
+    "model": "Corolla",
+    "yil": "2015",
+    "detay": "Sağ ön çamurluk ve far ihtiyacım var. Orijinal çıkma parça arıyorum.",
+    "il": "Bursa",
+    "ilce": "Osmangazi",
+    "butce": "5000 TL"
+})
 
 # ==========================================
 # 🎨 GÜVENLİ TASARIM ŞABLONLARI
@@ -28,8 +52,7 @@ LOGIN_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Giriş Yap - İlan Uygulaması</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
@@ -71,8 +94,7 @@ REGISTER_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kayıt Ol - İlan Uygulaması</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
@@ -142,68 +164,32 @@ REGISTER_HTML = """
 </html>
 """
 
-# ==========================================
-# 🛣️ SAYFA YÖNLENDİRMELERİ (ROUTES)
-# ==========================================
-
-@app.route('/')
-def home():
-    if 'telefon' in session:
-        return redirect(url_for('ilanlar_sayfasi'))
-    return redirect(url_for('login'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        telefon = request.form.get('telefon')
-        sifre = request.form.get('sifre')
-        
-        user = USERS_DB.get(telefon)
-        if user and check_password_hash(user["sifre_hash"], sifre):
-            session['telefon'] = telefon
-            session['ad_soyad'] = user["ad_soyad"]
-            return redirect(url_for('ilanlar_sayfasi'))
-            
-        return render_template_string(LOGIN_HTML, error="Hatalı telefon veya şifre!")
-        
-    return render_template_string(LOGIN_HTML)
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        telefon = request.form.get('telefon')
-        ad_soyad = request.form.get('ad_soyad')
-        sifre = request.form.get('sifre')
-        hesap_turu = request.form.get('hesap_turu')
-        vergi_no = request.form.get('vergi_no')
-        dukkan_adresi = request.form.get('dukkan_adresi')
-
-        if telefon in USERS_DB:
-            return render_template_string(REGISTER_HTML, error="Bu telefon numarası zaten kayıtlı!")
-
-        # Belleğe güvenli bir şekilde kaydediyoruz
-        USERS_DB[telefon] = {
-            "ad_soyad": ad_soyad,
-            "sifre_hash": generate_password_hash(sifre),
-            "hesap_tipi": hesap_turu,
-            "vergi_no": vergi_no if hesap_turu == 'esnaf' else None,
-            "dukan_adresi": dukkan_adresi if hesap_turu == 'esnaf' else None
-        }
-        return redirect(url_for('login'))
-        
-    return render_template_string(REGISTER_HTML)
-
-@app.route('/ilanlar')
-def ilanlar_sayfasi():
-    if 'telefon' not in session:
-        return redirect(url_for('login'))
-    return f"<body style='background-color:#0b1329; color:white; font-family:sans-serif; padding:30px;'><h1>Giriş Başarılı!</h1><h2>Hoş geldiniz, {session.get('ad_soyad')}</h2><p>İlanlar Sayfası ve panel fonksiyonları yakında eklenecek.</p><br><a href='/logout' style='color:#4cc9f0; text-decoration:none; font-weight:bold;'>Çıkış Yap</a></body>"
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+ILANLAR_HTML = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>İlanlar Paneli - İlan Uygulaması</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
+        body { background-color: #0b1329; color: #ffffff; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #1c2541; padding-bottom: 15px; }
+        .header h1 { color: #4cc9f0; font-size: 24px; }
+        .user-info { font-size: 14px; color: #abc4ff; text-align: right; }
+        .logout-btn { color: #ff4d4d; text-decoration: none; margin-left: 10px; font-weight: bold; }
+        .action-btn { display: inline-block; background-color: #4cc9f0; color: #0b1329; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; margin-bottom: 20px; }
+        .ilan-card { background-color: #1c2541; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+        .ilan-header { display: flex; justify-content: space-between; color: #4cc9f0; font-weight: bold; margin-bottom: 10px; border-bottom: 1px dashed #3a506b; padding-bottom: 5px; }
+        .ilan-info { font-size: 14px; color: #abc4ff; margin-bottom: 10px; display: flex; gap: 15px; }
+        .ilan-detay { background-color: #0b1329; padding: 12px; border-radius: 6px; font-size: 15px; line-height: 1.5; margin-bottom: 15px; }
+        .teklif-section { border-top: 1px solid #3a506b; padding-top: 10px; }
+        .teklif-item { background: #3a506b; padding: 8px 12px; border-radius: 6px; margin-bottom: 5px; font-size: 14px; display: flex; justify-content: space-between; }
+        .teklif-form input { padding: 10px; background: #3a506b; border: none; border-radius: 6px; color: white; width: 130px; outline: none; }
+        .teklif-form button { padding: 10px 15px; background: #4cc9f0; border: none; border-radius: 6px; color: #0b1329; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
