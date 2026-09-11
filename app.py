@@ -19,7 +19,10 @@ app.config['SECRET_KEY'] = 'ilan_uygulamasi_kesin_gizli_anahtar_123'
 
 db = SQLAlchemy(app)
 
-# Modeller
+# ==========================================
+# VERITABANI MODELLERI
+# ==========================================
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     telefon = db.Column(db.String(15), unique=True, nullable=False)
@@ -50,7 +53,10 @@ class Teklif(db.Model):
     aciklama = db.Column(db.Text, nullable=False)
     durum = db.Column(db.String(20), default='Beklemede')
 
-# Sayfalar
+# ==========================================
+# SAYFA YONLENDIRMELERI (ROUTES)
+# ==========================================
+
 @app.route('/')
 def home():
     if 'user_id' in session:
@@ -67,7 +73,7 @@ def login():
             session['user_id'] = user.id
             session['ad_soyad'] = user.ad_soyad
             return redirect(url_for('ilanlar_sayfasi'))
-        return "Hatalı telefon numarası veya şifre!", 401
+        return "Hatali telefon numarasi veya sifre!", 401
     return render_template('login.html')
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -81,10 +87,10 @@ def register():
         dukkan_adresi = request.form.get('dukkan_adresi')
 
         if not telefon or not sifre:
-            return "Telefon ve şifre zorunludur!", 400
+            return "Telefon ve sifre zorunludur!", 400
 
         if User.query.filter_by(telefon=telefon).first():
-            return "Bu telefon numarası zaten kayıtlı!", 400
+            return "Bu telefon numarasi zaten kayitli!", 400
 
         hashed_sifre = generate_password_hash(sifre)
         yeni_kullanici = User(
@@ -100,12 +106,14 @@ def register():
 def ilanlar_sayfasi():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    return "<h1>Giriş Başarılı! İlanlar Sayfası Yakında Eklenecek.</h1>"
+    return "<h1>Giris Basarili! Ilanlar Sayfasi Yakinda Eklenecek.</h1>"
+
+# ==========================================
+# VERITABANI VE SUNUCU BASLATMA
+# ==========================================
 
 with app.app_context():
     db.create_all()
 
 if __name__ == '__main__':
-    if __name__ == '__main__':
-    # Hatalı PORI veya boşluk içeren değişkeni tamamen temizliyoruz
     app.run(host='0.0.0.0', port=5000)
