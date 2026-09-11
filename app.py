@@ -1,283 +1,1690 @@
+# -*- coding: utf-8 -*-
+"""
+PARÇA İSTE — Tersine İlan / İstek Pazarı (MVP)
+================================================
+Tek dosyalık FastAPI backend + gömülü HTML/Tailwind CSS frontend.
+
+Kapsam: Bu platform araç ALIM/SATIMI için değildir. İlanlar her zaman bir
+aracın ÜZERİNE takılacak PARÇA / AKSESUAR / MODİFİYE (tuning) talebidir
+(ör. jant, body kit, LED far seti, egzoz, ses sistemi, kaplama/folyo,
+chip tuning vb.) — motor/şanzıman gibi genel tamir-bakım parçaları
+kapsam dışıdır.
+
+Mimarî özet
+-----------
+- ALICI (ücretsiz): Adım adım sihirbazla "bu aracım için şu aksesuar/
+  modifiye parçasını arıyorum" ilanı açar.
+- SATICI (aksesuarcı / modifiye ustası / sanayi esnafı): İlan havuzunu
+  görür, gizli fiyat teklifi verir. Alıcının telefon numarası ve doğrudan
+  iletişim butonları sadece "Premium Abone" modunda açılır (bu MVP'de
+  gerçek ödeme YOKTUR, sadece bir "Esnaf Modu Simülatörü" anahtarı ile
+  arka uçtan taklit edilir).
+- Veri katmanı: Bu bir MVP olduğu için veriler process belleğinde (RAM)
+  tutulur. Servis yeniden başlarsa ilanlar sıfırlanır. Gerçek bir ürüne
+  taşınırken burası bir veritabanına (Postgres vb.) bağlanmalıdır.
+- İl/İlçe verisi: Tarayıcıyı yormamak için sunucuya hiç gömülmez; frontend
+  JavaScript'i açık kaynaklı TurkiyeAPI'den (https://turkiyeapi.dev)
+  dinamik olarak çeker. Bu sayede 81 il + ~970 ilçe backend'i şişirmez.
+- AI Vision: Gerçek bir görüntü işleme modeli YOKTUR. İstenen davranış
+  gereği, yüklenen dosyanın adına bakan basit bir similasyon fonksiyonu
+  vardır (bkz. simulate_ai_vision).
+
+Render.com dağıtımı
+-------------------
+Start Command:  uvicorn main:app --host 0.0.0.0 --port $PORT
+(Alternatif olarak "python main.py" ile de çalışır; $PORT ortam
+değişkenini otomatik okur — bkz. dosya sonundaki __main__ bloğu.)
+"""
+
 import os
 import re
-import json
+import random
+import string
 import uuid
-from datetime import datetime
-from typing import Any
-from urllib.request import urlopen, Request
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-app = FastAPI(title="ParçaTeklif Reverse Marketplace", version="1.0.0")
+# ==========================================================================
+# 1) SABİT VERİLER — Marka / Model / Renk / Parça Kategorisi
+# ==========================================================================
+# Not: Türkiye'de en yaygın 20 marka ve her markanın en popüler modelleri
+# sert kodludur (hardcoded). Bu liste, aksesuar/modifiye parçasının hangi
+# araca uygun olduğunu belirlemek için kullanılır.
 
-# Render için PORT dinamik olarak kullanılır: uvicorn app:app --host 0.0.0.0 --port $PORT
-
-VEHICLES = {
-"Volkswagen": ["Golf", "Passat", "Polo", "Jetta", "Tiguan", "Touareg", "T-Roc", "Taigo", "Caddy", "Transporter", "Crafter", "Amarok", "Arteon", "Bora", "Touran", "Sharan"],
-"Renault": ["Clio", "Megane", "Symbol", "Fluence", "Captur", "Kadjar", "Austral", "Kangoo", "Master", "Trafic", "Express", "Talisman", "Laguna", "Scenic", "Modus", "Zoe"],
-"Fiat": ["Egea", "Linea", "Doblo", "Fiorino", "Punto", "500", "500X", "500L", "Tipo", "Ducato", "Panda", "Albea", "Palio", "Siena", "Marea", "Freemont"],
-"Ford": ["Focus", "Fiesta", "Mondeo", "Kuga", "Puma", "EcoSport", "Courier", "Connect", "Transit", "Custom", "Ranger", "Tourneo", "Mustang", "Fusion", "C-Max", "S-Max", "Galaxy"],
-"Toyota": ["Corolla", "Yaris", "C-HR", "Auris", "RAV4", "Hilux", "Proace", "Camry", "Avensis", "Verso", "Land Cruiser", "Prius", "Aygo"],
-"Opel": ["Astra", "Corsa", "Insignia", "Mokka", "Crossland", "Grandland", "Combo", "Vivaro", "Zafira", "Meriva", "Vectra", "Adam", "Karl"],
-"BMW": ["1 Serisi", "2 Serisi", "3 Serisi", "4 Serisi", "5 Serisi", "6 Serisi", "7 Serisi", "8 Serisi", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "Z4"],
-"Mercedes-Benz": ["A Serisi", "B Serisi", "C Serisi", "E Serisi", "S Serisi", "CLA", "CLS", "GLA", "GLB", "GLC", "GLE", "GLS", "Sprinter", "Vito", "Viano", "Citan"],
-"Audi": ["A1", "A3", "A4", "A5", "A6", "A7", "A8", "Q2", "Q3", "Q4 e-tron", "Q5", "Q7", "Q8", "TT"],
-"Hyundai": ["i10", "i20", "i30", "Accent", "Elantra", "Sonata", "Tucson", "Kona", "Bayon", "Santa Fe", " ix35", "Staria", "H-1", "Getz"],
-"Kia": ["Picanto", "Rio", "Ceed", "Cerato", "Proceed", "Sportage", "Stonic", "Sorento", "Niro", "Soul", "Carnival", "Bongo"],
-"Honda": ["Civic", "Jazz", "CR-V", "HR-V", "City", "Accord", "Type R", "Prelude", "CR-Z"],
-"Peugeot": ["106", "206", "207", "208", "301", "307", "308", "407", "508", "2008", "3008", "5008", "Partner", "Rifter", "Expert", "Boxer"],
-"Citroën": ["C1", "C3", "C4", "C5", "C3 Aircross", "C4 Cactus", "C5 Aircross", "Berlingo", "Jumpy", "Jumper", "Nemo", "Xsara", "Saxo"],
-"Dacia": ["Sandero", "Logan", "Duster", "Lodgy", "Dokker", "Jogger", "Spring", "Solenza", "Pick-Up"],
-"Nissan": ["Micra", "Qashqai", "Juke", "X-Trail", "Navara", "Primastar", "Qashqai+2", "Note", "Almera", "Pathfinder", "Terrano"],
-"Skoda": ["Fabia", "Scala", "Rapid", "Octavia", "Superb", "Kamiq", "Karoq", "Kodiaq", "Yeti", "Roomster"],
-"Seat": ["Ibiza", "Leon", "Toledo", "Arona", "Ateca", "Tarraco", "Altea", "Cordoba", "Exeo"],
-"Volvo": ["S40", "S60", "S80", "S90", "V40", "V50", "V60", "V70", "V90", "XC40", "XC60", "XC90"],
-"Tesla": ["Model 3", "Model Y", "Model S", "Model X"],
-"Mitsubishi": ["Colt", "Lancer", "ASX", "Outlander", "Pajero", "L200", "Space Star"],
-"Suzuki": ["Swift", "Vitara", "S-Cross", "Jimny", "Baleno", "Ignis", "Celerio", "SX4"],
-"Mazda": ["Mazda2", "Mazda3", "Mazda6", "CX-3", "CX-5", "CX-30", "CX-60", "MX-5", "RX-8"],
-"Subaru": ["Impreza", "Forester", "Outback", "XV", "Legacy", "BRZ"],
-"Jeep": ["Renegade", "Compass", "Cherokee", "Grand Cherokee", "Wrangler", "Avenger"],
-"Land Rover": ["Defender", "Discovery", "Discovery Sport", "Range Rover", "Evoque", "Velar"],
-"Chevrolet": ["Aveo", "Cruze", "Captiva", "Spark", "Lacetti", "Epica", "Kalos"],
-"Chery": ["Tiggo 7 Pro", "Tiggo 8 Pro", "Omoda 5", "Arrizo 3", "Arrizo 5"],
-"MG": ["ZS", "HS", "4", "5", "Marvel R"],
-"BYD": ["Atto 3", "Dolphin", "Seal", "Han", "Tang"],
+CAR_DATA: Dict[str, List[str]] = {
+    "Renault": ["Clio", "Megane", "Symbol", "Fluence", "Talisman", "Captur",
+                "Kadjar", "Kangoo", "Toros", "12", "9"],
+    "Fiat": ["Egea", "Linea", "Albea", "Doblo", "Punto", "Fiorino", "Panda",
+             "Tipo", "Palio", "Şahin"],
+    "Volkswagen": ["Golf", "Passat", "Polo", "Jetta", "Bora", "Caddy",
+                   "Tiguan", "Transporter", "Scirocco", "Vento"],
+    "Ford": ["Focus", "Fiesta", "Mondeo", "Connect", "Courier", "Kuga",
+             "Ranger", "Transit", "B-Max", "Puma"],
+    "Opel": ["Astra", "Corsa", "Vectra", "Insignia", "Combo", "Mokka",
+             "Meriva", "Zafira", "Grandland X"],
+    "Toyota": ["Corolla", "Yaris", "Auris", "Hilux", "C-HR", "RAV4",
+               "Avensis", "Camry"],
+    "Hyundai": ["i20", "i10", "Accent Era", "Accent Blue", "Elantra",
+                "Tucson", "Bayon", "Kona", "ix35"],
+    "Peugeot": ["301", "308", "208", "3008", "2008", "508", "Partner", "407"],
+    "Citroën": ["C-Elysée", "C3", "C4", "Berlingo", "C5", "C2", "C4 Cactus"],
+    "Honda": ["Civic", "City", "CR-V", "Jazz", "Accord"],
+    "Nissan": ["Micra", "Qashqai", "Juke", "Almera", "X-Trail"],
+    "Chevrolet": ["Aveo", "Cruze", "Lacetti", "Captiva", "Spark"],
+    "Škoda": ["Octavia", "Fabia", "Superb", "Rapid", "Yeti", "Karoq"],
+    "Seat": ["Ibiza", "Leon", "Toledo", "Córdoba", "Altea"],
+    "Mercedes-Benz": ["C-Serisi", "E-Serisi", "A-Serisi", "Vito",
+                      "Sprinter", "CLA", "GLA"],
+    "BMW": ["3 Serisi", "5 Serisi", "1 Serisi", "X1", "X3", "X5"],
+    "Audi": ["A3", "A4", "A6", "Q3", "Q5", "A1"],
+    "Dacia": ["Duster", "Sandero", "Logan", "Dokker", "Lodgy"],
+    "Kia": ["Rio", "Ceed", "Sportage", "Picanto", "Cerato", "Sorento"],
+    "Suzuki": ["Swift", "Vitara", "Baleno", "S-Cross", "Grand Vitara"],
 }
-MOTOR_OPTIONS = ["1.0 Benzin", "1.2 Benzin", "1.3 Benzin", "1.4 Benzin", "1.5 Benzin", "1.6 Benzin", "1.8 Benzin", "2.0 Benzin", "2.5 Benzin", "3.0 Benzin", "1.3 Dizel", "1.5 Dizel", "1.6 Dizel", "1.9 Dizel", "2.0 Dizel", "2.2 Dizel", "2.5 Dizel", "3.0 Dizel", "TDI", "TSI", "TFSI", "dCi", "BlueHDi", "CRDi", "EcoBoost", "Hybrid", "Plug-in Hybrid", "Elektrikli"]
-COMMON_PACKAGES = ["Boş / Standart", "Base", "Life", "Joy", "Touch", "Icon", "Zen", "Authentic", "Expression", "Business", "Comfort", "Comfortline", "Highline", "Trendline", "Style", "Ambition", "Elegance", "Premium", "Luxury", "Sport", "M Sport", "R-Line", "GT Line", "Allure", "Active", "Allure Pack", "Titanium", "Vignale", "Platinum", "Dynamic", "Prestige", "Executive", "Ultimate", "Elite", "N Line", "Prime", "Dream", "Flame", "Passion", "Advance", "Impression", "Exclusive", "S", "SE", "SEL", "XLE", "GLX", "L", "RS", "AMG", "M Performance", "Diğer / özel paket"]
-ALL_TRIMS = MOTOR_OPTIONS + COMMON_PACKAGES
-YEARS = list(range(1980, 2027))
-VEHICLE_DETAILS = {brand: {model: {"years": YEARS, "packages": ALL_TRIMS} for model in models} for brand, models in VEHICLES.items()}
-PART_GROUPS = {"Mekanik": ["Motor", "Şanzıman", "Debriyaj", "Turbo", "Enjektör", "Fren Sistemi", "Süspansiyon", "Direksiyon", "Diferansiyel", "Soğutma Sistemi", "Egzoz"], "Elektrik ve Elektronik": ["Motor Beyni / ECU", "Airbag Beyni", "ABS Beyni", "Elektrik Tesisatı", "Alternatör", "Marş Motoru", "Akü", "Sensör", "Multimedya", "Gösterge Paneli", "Klima Elektroniği"], "Kaporta": ["Kapı", "Kaput", "Çamurluk", "Tavan", "Bagaj Kapağı", "Şase", "Ön Panel", "Arka Panel", "Ayna"], "Plastik Aksam": ["Ön Tampon", "Arka Tampon", "Panjur / Izgara", "Sis Farı Çerçevesi", "Davlumbaz", "Marşpiyel", "Konsol", "İç Trim", "Plastik Kaplama"], "Aydınlatma": ["Far", "Stop Lambası", "Sis Farı", "Sinyal", "Gündüz Farı", "LED Modül"], "Jant ve Lastik": ["Jant", "Lastik", "Stepne", "Jant Kapağı", "TPMS Sensörü"], "İç Mekan": ["Koltuk", "Döşeme", "Direksiyon", "Vites Kolu", "Emniyet Kemeri", "Torpido", "Teyp"], "Diğer": ["Aksesuar", "Klima", "Çeki Demiri", "Yakıt Deposu", "Diğer"]}
-CATEGORIES = [f"{group} — {item}" for group, items in PART_GROUPS.items() for item in items]
-TURKEY_LOCATIONS = [{"name":"Adana","districts":["Aladağ","Ceyhan","Çukurova","Feke","İmamoğlu","Karaisalı","Karataş","Kozan","Pozantı","Saimbeyli","Sarıçam","Seyhan","Tufanbeyli","Yumurtalık","Yüreğir"]},{"name":"Adıyaman","districts":["Besni","Çelikhan","Gerger","Gölbaşı","Kahta","Merkez","Samsat","Sincik","Tut"]},{"name":"Afyonkarahisar","districts":["Başmakçı","Bayat","Bolvadin","Çay","Çobanlar","Dazkırı","Dinar","Emirdağ","Evciler","Hocalar","İhsaniye","İscehisar","Kızılören","Merkez","Sandıklı","Sinanpaşa","Sultandağı","Şuhut"]},{"name":"Ağrı","districts":["Diyadin","Doğubayazıt","Eleşkirt","Hamur","Merkez","Patnos","Taşlıçay","Tutak"]},{"name":"Amasya","districts":["Göynücek","Gümüşhacıköy","Hamamözü","Merkez","Merzifon","Suluova","Taşova"]},{"name":"Ankara","districts":["Akyurt","Altındağ","Ayaş","Bala","Beypazarı","Çamlıdere","Çankaya","Çubuk","Elmadağ","Etimesgut","Evren","Gölbaşı","Güdül","Haymana","Kahramankazan","Kalecik","Keçiören","Kızılcahamam","Mamak","Nallıhan","Polatlı","Pursaklar","Sincan","Şereflikoçhisar","Yenimahalle"]},{"name":"Antalya","districts":["Akseki","Aksu","Alanya","Demre","Döşemealtı","Elmalı","Finike","Gazipaşa","Gündoğmuş","İbradı","Kaş","Kemer","Kepez","Konyaaltı","Korkuteli","Kumluca","Manavgat","Muratpaşa","Serik"]},{"name":"Artvin","districts":["Ardanuç","Arhavi","Borçka","Hopa","Kemalpaşa","Merkez","Murgul","Şavşat","Yusufeli"]},{"name":"Aydın","districts":["Bozdoğan","Buharkent","Çine","Didim","Efeler","Germencik","İncirliova","Karacasu","Karpuzlu","Koçarlı","Köşk","Kuşadası","Kuyucak","Nazilli","Söke","Sultanhisar","Yenipazar"]},{"name":"Balıkesir","districts":["Altıeylül","Ayvalık","Balya","Bandırma","Bigadiç","Burhaniye","Dursunbey","Edremit","Erdek","Gömeç","Gönen","Havran","İvrindi","Karesi","Kepsut","Manyas","Marmara","Savaştepe","Sındırgı","Susurluk"]},{"name":"Bilecik","districts":["Bozüyük","Gölpazarı","İnhisar","Merkez","Osmaneli","Pazaryeri","Söğüt","Yenipazar"]},{"name":"Bingöl","districts":["Adaklı","Genç","Karlıova","Kiğı","Merkez","Solhan","Yayladere","Yedisu"]},{"name":"Bitlis","districts":["Adilcevaz","Ahlat","Güroymak","Hizan","Merkez","Mutki","Tatvan"]},{"name":"Bolu","districts":["Dörtdivan","Gerede","Göynük","Kıbrıscık","Mengen","Merkez","Mudurnu","Seben","Yeniçağa"]},{"name":"Burdur","districts":["Ağlasun","Altınyayla","Bucak","Çavdır","Çeltikçi","Gölhisar","Karamanlı","Kemer","Merkez","Tefenni","Yeşilova"]},{"name":"Bursa","districts":["Büyükorhan","Gemlik","Gürsu","Harmancık","İnegöl","İznik","Karacabey","Keles","Kestel","Mudanya","Mustafakemalpaşa","Nilüfer","Orhaneli","Orhangazi","Osmangazi","Yenişehir","Yıldırım"]},{"name":"Çanakkale","districts":["Ayvacık","Bayramiç","Biga","Bozcaada","Çan","Eceabat","Ezine","Gelibolu","Gökçeada","Lapseki","Merkez","Yenice"]},{"name":"Çankırı","districts":["Atkaracalar","Bayramören","Çerkeş","Eldivan","Ilgaz","Kızılırmak","Korgun","Kurşunlu","Merkez","Orta","Şabanözü","Yapraklı"]},{"name":"Çorum","districts":["Alaca","Bayat","Boğazkale","Dodurga","İskilip","Kargı","Laçin","Mecitözü","Merkez","Oğuzlar","Ortaköy","Osmancık","Sungurlu","Uğurludağ"]},{"name":"Denizli","districts":["Acıpayam","Babadağ","Baklan","Bekilli","Beyağaç","Bozkurt","Buldan","Çal","Çameli","Çardak","Çivril","Güney","Honaz","Kale","Merkezefendi","Pamukkale","Sarayköy","Serinhisar","Tavas"]},{"name":"Diyarbakır","districts":["Bağlar","Bismil","Çermik","Çınar","Çüngüş","Dicle","Eğil","Ergani","Hani","Hazro","Kayapınar","Kocaköy","Kulp","Lice","Silvan","Sur","Yenişehir"]},{"name":"Edirne","districts":["Enez","Havsa","İpsala","Keşan","Lalapaşa","Meriç","Merkez","Süloğlu","Uzunköprü"]},{"name":"Elazığ","districts":["Ağın","Alacakaya","Arıcak","Baskil","Karakoçan","Keban","Kovancılar","Maden","Merkez","Palu","Sivrice"]},{"name":"Erzincan","districts":["Çayırlı","İliç","Kemah","Kemaliye","Merkez","Otlukbeli","Refahiye","Tercan","Üzümlü"]},{"name":"Erzurum","districts":["Aşkale","Aziziye","Çat","Hınıs","Horasan","İspir","Karaçoban","Karayazı","Köprüköy","Narman","Oltu","Olur","Palandöken","Pasinler","Pazaryolu","Şenkaya","Tekman","Tortum","Uzundere","Yakutiye"]},{"name":"Eskişehir","districts":["Alpu","Beylikova","Çifteler","Günyüzü","Han","İnönü","Mahmudiye","Mihalgazi","Mihalıççık","Odunpazarı","Sarıcakaya","Seyitgazi","Sivrihisar","Tepebaşı"]},{"name":"Gaziantep","districts":["Araban","İslahiye","Karkamış","Nizip","Nurdağı","Oğuzeli","Şahinbey","Şehitkamil","Yavuzeli"]},{"name":"Giresun","districts":["Alucra","Bulancak","Çamoluk","Çanakçı","Dereli","Doğankent","Espiye","Eynesil","Görele","Güce","Keşap","Merkez","Piraziz","Şebinkarahisar","Tirebolu","Yağlıdere"]},{"name":"Gümüşhane","districts":["Kelkit","Köse","Kürtün","Merkez","Şiran","Torul"]},{"name":"Hakkari","districts":["Çukurca","Derecik","Merkez","Şemdinli","Yüksekova"]},{"name":"Hatay","districts":["Altınözü","Antakya","Arsuz","Belen","Defne","Dörtyol","Erzin","Hassa","İskenderun","Kırıkhan","Kumlu","Payas","Reyhanlı","Samandağ","Yayladağı"]},{"name":"Isparta","districts":["Aksu","Atabey","Eğirdir","Gelendost","Gönen","Keçiborlu","Merkez","Senirkent","Sütçüler","Şarkikaraağaç","Uluborlu","Yalvaç","Yenişarbademli"]},{"name":"Mersin","districts":["Akdeniz","Anamur","Aydıncık","Bozyazı","Çamlıyayla","Erdemli","Gülnar","Mezitli","Mut","Silifke","Tarsus","Toroslar","Yenişehir"]},{"name":"İstanbul","districts":["Adalar","Arnavutköy","Ataşehir","Avcılar","Bağcılar","Bahçelievler","Bakırköy","Başakşehir","Bayrampaşa","Beşiktaş","Beykoz","Beylikdüzü","Beyoğlu","Büyükçekmece","Çatalca","Çekmeköy","Esenler","Esenyurt","Eyüpsultan","Fatih","Gaziosmanpaşa","Güngören","Kadıköy","Kağıthane","Kartal","Küçükçekmece","Maltepe","Pendik","Sancaktepe","Sarıyer","Silivri","Sultanbeyli","Sultangazi","Şile","Şişli","Tuzla","Ümraniye","Üsküdar","Zeytinburnu"]},{"name":"İzmir","districts":["Aliağa","Balçova","Bayındır","Bayraklı","Bergama","Beydağ","Bornova","Buca","Çeşme","Çiğli","Dikili","Foça","Gaziemir","Güzelbahçe","Karabağlar","Karaburun","Karşıyaka","Kemalpaşa","Kınık","Kiraz","Konak","Menderes","Menemen","Narlıdere","Ödemiş","Seferihisar","Selçuk","Tire","Torbalı","Urla"]},{"name":"Kars","districts":["Akyaka","Arpaçay","Digor","Kağızman","Merkez","Sarıkamış","Selim","Susuz"]},{"name":"Kastamonu","districts":["Abana","Ağlı","Araç","Azdavay","Bozkurt","Cide","Çatalzeytin","Daday","Devrekani","Doğanyurt","Hanönü","İhsangazi","İnebolu","Küre","Merkez","Pınarbaşı","Seydiler","Şenpazar","Taşköprü","Tosya"]},{"name":"Kayseri","districts":["Akkışla","Bünyan","Develi","Felahiye","Hacılar","İncesu","Kocasinan","Melikgazi","Özvatan","Pınarbaşı","Sarıoğlan","Sarız","Talas","Tomarza","Yahyalı","Yeşilhisar"]},{"name":"Kırklareli","districts":["Babaeski","Demirköy","Kofçaz","Lüleburgaz","Merkez","Pehlivanköy","Pınarhisar","Vize"]},{"name":"Kırşehir","districts":["Akçakent","Akpınar","Boztepe","Çiçekdağı","Kaman","Merkez","Mucur"]},{"name":"Kocaeli","districts":["Başiskele","Çayırova","Darıca","Derince","Dilovası","Gebze","Gölcük","İzmit","Kandıra","Karamürsel","Kartepe","Körfez"]},{"name":"Konya","districts":["Ahırlı","Akören","Akşehir","Altınekin","Beyşehir","Bozkır","Cihanbeyli","Çeltik","Çumra","Derbent","Derebucak","Doğanhisar","Emirgazi","Ereğli","Güneysınır","Hadim","Halkapınar","Hüyük","Ilgın","Kadınhanı","Karapınar","Karatay","Kulu","Meram","Sarayönü","Selçuklu","Seydişehir","Taşkent","Tuzlukçu","Yalıhüyük","Yunak"]},{"name":"Kütahya","districts":["Altıntaş","Aslanapa","Çavdarhisar","Domaniç","Dumlupınar","Emet","Gediz","Hisarcık","Merkez","Pazarlar","Simav","Şaphane","Tavşanlı"]},{"name":"Malatya","districts":["Akçadağ","Arapgir","Arguvan","Battalgazi","Darende","Doğanşehir","Doğanyol","Hekimhan","Kale","Kuluncak","Pütürge","Yazıhan","Yeşilyurt"]},{"name":"Manisa","districts":["Ahmetli","Akhisar","Alaşehir","Demirci","Gölmarmara","Gördes","Kırkağaç","Köprübaşı","Kula","Salihli","Sarıgöl","Saruhanlı","Selendi","Soma","Şehzadeler","Turgutlu","Yunusemre"]},{"name":"Kahramanmaraş","districts":["Afşin","Andırın","Çağlayancerit","Dulkadiroğlu","Ekinözü","Elbistan","Göksun","Nurhak","Onikişubat","Pazarcık","Türkoğlu"]},{"name":"Mardin","districts":["Artuklu","Dargeçit","Derik","Kızıltepe","Mazıdağı","Midyat","Nusaybin","Ömerli","Savur","Yeşilli"]},{"name":"Muğla","districts":["Bodrum","Dalaman","Datça","Fethiye","Kavaklıdere","Köyceğiz","Marmaris","Menteşe","Milas","Ortaca","Seydikemer","Ula","Yatağan"]},{"name":"Muş","districts":["Bulanık","Hasköy","Korkut","Malazgirt","Merkez","Varto"]},{"name":"Nevşehir","districts":["Acıgöl","Avanos","Derinkuyu","Gülşehir","Hacıbektaş","Kozaklı","Merkez","Ürgüp"]},{"name":"Niğde","districts":["Altunhisar","Bor","Çamardı","Çiftlik","Merkez","Ulukışla"]},{"name":"Ordu","districts":["Akkuş","Altınordu","Aybastı","Çamaş","Çatalpınar","Çaybaşı","Fatsa","Gölköy","Gülyalı","Gürgentepe","İkizce","Kabadüz","Kabataş","Korgan","Kumru","Mesudiye","Perşembe","Ulubey","Ünye"]},{"name":"Rize","districts":["Ardeşen","Çamlıhemşin","Çayeli","Derepazarı","Fındıklı","Güneysu","Hemşin","İkizdere","İyidere","Kalkandere","Merkez","Pazar"]},{"name":"Sakarya","districts":["Adapazarı","Akyazı","Arifiye","Erenler","Ferizli","Geyve","Hendek","Karapürçek","Karasu","Kaynarca","Kocaali","Pamukova","Sapanca","Serdivan","Söğütlü","Taraklı"]},{"name":"Samsun","districts":["19 Mayıs","Alaçam","Asarcık","Atakum","Ayvacık","Bafra","Canik","Çarşamba","Havza","İlkadım","Kavak","Ladik","Salıpazarı","Tekkeköy","Terme","Vezirköprü","Yakakent"]},{"name":"Siirt","districts":["Baykan","Eruh","Kurtalan","Merkez","Pervari","Şirvan","Tillo"]},{"name":"Sinop","districts":["Ayancık","Boyabat","Dikmen","Durağan","Erfelek","Gerze","Merkez","Saraydüzü","Türkeli"]},{"name":"Sivas","districts":["Akıncılar","Altınyayla","Divriği","Doğanşar","Gemerek","Gölova","Gürün","Hafik","İmranlı","Kangal","Koyulhisar","Merkez","Suşehri","Şarkışla","Ulaş","Yıldızeli","Zara"]},{"name":"Tekirdağ","districts":["Çerkezköy","Çorlu","Ergene","Hayrabolu","Kapaklı","Malkara","Marmaraereğlisi","Muratlı","Saray","Süleymanpaşa","Şarköy"]},{"name":"Tokat","districts":["Almus","Artova","Başçiftlik","Erbaa","Merkez","Niksar","Pazar","Reşadiye","Sulusaray","Turhal","Yeşilyurt","Zile"]},{"name":"Trabzon","districts":["Akçaabat","Araklı","Arsin","Beşikdüzü","Çarşıbaşı","Çaykara","Dernekpazarı","Düzköy","Hayrat","Köprübaşı","Maçka","Of","Ortahisar","Sürmene","Şalpazarı","Tonya","Vakfıkebir","Yomra"]},{"name":"Tunceli","districts":["Çemişgezek","Hozat","Mazgirt","Merkez","Nazımiye","Ovacık","Pertek","Pülümür"]},{"name":"Şanlıurfa","districts":["Akçakale","Birecik","Bozova","Ceylanpınar","Eyyübiye","Halfeti","Haliliye","Harran","Hilvan","Karaköprü","Siverek","Suruç","Viranşehir"]},{"name":"Uşak","districts":["Banaz","Eşme","Karahallı","Merkez","Sivaslı","Ulubey"]},{"name":"Van","districts":["Bahçesaray","Başkale","Çaldıran","Çatak","Edremit","Erciş","Gevaş","Gürpınar","İpekyolu","Muradiye","Özalp","Saray","Tuşba"]},{"name":"Yozgat","districts":["Akdağmadeni","Aydıncık","Boğazlıyan","Çandır","Çayıralan","Çekerek","Kadışehri","Merkez","Saraykent","Sarıkaya","Sorgun","Şefaatli","Yenifakılı","Yerköy"]},{"name":"Zonguldak","districts":["Alaplı","Çaycuma","Devrek","Ereğli","Gökçebey","Kilimli","Kozlu","Merkez"]},{"name":"Aksaray","districts":["Ağaçören","Eskil","Gülağaç","Güzelyurt","Merkez","Ortaköy","Sarıyahşi","Sultanhanı"]},{"name":"Bayburt","districts":["Aydıntepe","Demirözü","Merkez"]},{"name":"Karaman","districts":["Ayrancı","Başyayla","Ermenek","Kazımkarabekir","Merkez","Sarıveliler"]},{"name":"Kırıkkale","districts":["Bahşılı","Balışeyh","Çelebi","Delice","Karakeçili","Keskin","Merkez","Sulakyurt","Yahşihan"]},{"name":"Batman","districts":["Beşiri","Gercüş","Hasankeyf","Kozluk","Merkez","Sason"]},{"name":"Şırnak","districts":["Beytüşşebap","Cizre","Güçlükonak","İdil","Merkez","Silopi","Uludere"]},{"name":"Bartın","districts":["Amasra","Kurucaşile","Merkez","Ulus"]},{"name":"Ardahan","districts":["Çıldır","Damal","Göle","Hanak","Merkez","Posof"]},{"name":"Iğdır","districts":["Aralık","Karakoyunlu","Merkez","Tuzluca"]},{"name":"Yalova","districts":["Altınova","Armutlu","Çınarcık","Çiftlikköy","Merkez","Termal"]},{"name":"Karabük","districts":["Eflani","Eskipazar","Merkez","Ovacık","Safranbolu","Yenice"]},{"name":"Kilis","districts":["Elbeyli","Merkez","Musabeyli","Polateli"]},{"name":"Osmaniye","districts":["Bahçe","Düziçi","Hasanbeyli","Kadirli","Merkez","Sumbas","Toprakkale"]},{"name":"Düzce","districts":["Akçakoca","Cumayeri","Çilimli","Gölyaka","Gümüşova","Kaynaşlı","Merkez","Yığılca"]}]
-COLORS = ["Beyaz", "Siyah", "Gri", "Gümüş", "Kırmızı", "Mavi", "Lacivert", "Yeşil", "Sarı", "Turuncu", "Kahverengi", "Bej", "Bordo", "Mor", "Altın"]
-CATEGORIES = [f"{group} — {item}" for group, items in PART_GROUPS.items() for item in items]
 
-# MVP veri deposu: uygulama yeniden başlatıldığında sıfırlanır; üretimde PostgreSQL'e taşınabilir.
-LISTINGS: list[dict[str, Any]] = []
-OFFERS: list[dict[str, Any]] = []
-USERS: list[dict[str, Any]] = []
-MESSAGES: list[dict[str, Any]] = []
-PREMIUM_PHONES: set[str] = set()
-LOCATION_CACHE: dict[str, Any] = {"data": None, "loaded_at": None}
+COLORS: List[str] = [
+    "Beyaz", "Siyah", "Gri", "Gümüş", "Kırmızı", "Mavi", "Lacivert",
+    "Yeşil", "Kahverengi", "Bej", "Sarı", "Turuncu", "Mor", "Bordo", "Füme",
+]
 
-class ListingPayload(BaseModel):
-    brand: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-    year: str = Field(min_length=4)
-    trim: str = Field(min_length=1)
-    color: str = Field(min_length=1)
-    category: str = Field(min_length=1)
-    province: str = Field(min_length=1)
-    district: str = Field(min_length=1)
-    description: str = Field(min_length=5)
-    phone: str = Field(min_length=10)
-    buyer_image: str = ""
+PART_CATEGORIES: List[str] = [
+    "Jant / Lastik",
+    "Egzoz Sistemi (Sport / Modifiye)",
+    "Body Kit / Spoiler / Difüzör",
+    "Ön - Arka Tampon Aksesuarı",
+    "Far / Stop (LED - Xenon Aksesuar)",
+    "Sis Farı / Ek Aydınlatma",
+    "Ses Sistemi / Multimedya",
+    "Araç Kaplama / Folyo",
+    "İç Mekan Aksesuarı (Döşeme, Pedal, Direksiyon)",
+    "Dış Mekan Aksesuarı (Ayna Kapağı, Rüzgarlık, Çıta)",
+    "Performans / Chip Tuning",
+    "Spor Süspansiyon (Yükseltme / Alçaltma)",
+    "Karbon / Krom Detay",
+    "Alarm / Güvenlik - Park Sensörü",
+    "Diğer Aksesuar / Modifiye",
+]
 
-class OfferPayload(BaseModel):
-    listing_id: str
-    seller_name: str = Field(min_length=2)
-    amount: str = Field(min_length=1)
-    note: str = Field(min_length=2)
-    premium: bool = False
-    seller_image: str = Field(min_length=1)
-    seller_phone: str = Field(min_length=10)
+_THIS_YEAR = datetime.now().year
+YEARS: List[int] = list(range(_THIS_YEAR + 1, 1989, -1))
 
-class RegisterPayload(BaseModel):
-    first_name: str = Field(min_length=2)
-    last_name: str = Field(min_length=2)
-    email: str = Field(min_length=5)
-    phone: str = Field(min_length=10)
-    role: str = Field(pattern="^(buyer|seller)$")
-    password: str = Field(min_length=6)
-    verify_channel: str = Field(pattern="^(sms|email)$")
+# ==========================================================================
+# 2) AI VISION SİMÜLASYONU
+# ==========================================================================
+# Gerçek görüntü tanıma yoktur. İstenen davranış gereği dosya adı üzerinden
+# basit bir eşleştirme yapılır. Üretimde buraya gerçek bir görüntü tanıma
+# modeli (ör. bir vision API çağrısı) entegre edilebilir.
 
-class VerifyPayload(BaseModel):
+AI_RULES = [
+    {
+        "match": "far",
+        "brand": "Volkswagen", "model": "Golf", "year": 2016, "color": "Beyaz",
+        "part_category": "Far / Stop (LED - Xenon Aksesuar)",
+        "description": (
+            "Yapay zekâ analizi: Görselde bir far / aydınlatma aksesuarı tespit "
+            "edildi. LED veya Xenon dönüşüm kiti ya da komple aksesuar far seti "
+            "talebi olarak sınıflandırıldı."
+        ),
+    },
+    {
+        "match": "tampon",
+        "brand": "Renault", "model": "Clio", "year": 2019, "color": "Kırmızı",
+        "part_category": "Ön - Arka Tampon Aksesuarı",
+        "description": (
+            "Yapay zekâ analizi: Görselde bir body kit / spor tampon aksesuarı "
+            "tespit edildi. Boyalı, astarlı veya renkli versiyon tercihini "
+            "açıklamaya ekleyebilirsin."
+        ),
+    },
+]
+
+AI_DEFAULT = {
+    "brand": "Fiat", "model": "Egea", "year": 2020, "color": "Gri",
+    "part_category": "Diğer Aksesuar / Modifiye",
+    "description": (
+        "Yapay zekâ analizi: Görselde net bir aksesuar/modifiye parçası ayırt "
+        "edilemedi, talep genel bir aksesuar isteği olarak sınıflandırıldı. "
+        "Aşağıdaki alanları ihtiyacına göre düzenleyebilirsin."
+    ),
+}
+
+
+def simulate_ai_vision(filename: str) -> Dict[str, Any]:
+    """Yüklenen görselin dosya adına göre sahte bir AI Vision tespiti üretir."""
+    name = (filename or "").lower()
+    for rule in AI_RULES:
+        if rule["match"] in name:
+            result = {k: v for k, v in rule.items() if k != "match"}
+            return result
+    return dict(AI_DEFAULT)
+
+
+# ==========================================================================
+# 3) YARDIMCI FONKSİYONLAR
+# ==========================================================================
+
+PHONE_RE = re.compile(r"^05\d{9}$")
+
+
+def normalize_phone(raw: str) -> str:
+    """Kullanıcının girdiği telefonu '05XXXXXXXXX' biçimine normalize eder.
+
+    Kabul edilen girişler: '0532 111 22 33', '532 111 22 33',
+    '+90 532 111 22 33', '905321112233' vb.
+    Geçersizse ValueError fırlatır.
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    if digits.startswith("0090"):
+        digits = digits[4:]
+    if digits.startswith("90") and len(digits) == 12:
+        digits = digits[2:]
+    if len(digits) == 10 and digits.startswith("5"):
+        digits = "0" + digits
+    if not PHONE_RE.match(digits):
+        raise ValueError(
+            "Geçersiz telefon numarası. Örnek biçim: 0532 111 22 33"
+        )
+    return digits
+
+
+def format_phone(digits: str) -> str:
+    """'05321112233' -> '0532 111 22 33'"""
+    if len(digits) != 11:
+        return digits
+    return f"{digits[0:4]} {digits[4:7]} {digits[7:9]} {digits[9:11]}"
+
+
+def mask_phone(digits: str) -> str:
+    if len(digits) != 11:
+        return "•••• ••• •• ••"
+    return f"{digits[0:4]} ••• •• {digits[9:11]}"
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def new_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def gen_otp_code() -> str:
+    return "".join(random.choices(string.digits, k=4))
+
+
+# ==========================================================================
+# 4) BELLEK-İÇİ VERİ DEPOSU (In-memory "DB")
+# ==========================================================================
+# MVP kapsamında kalıcı bir veritabanı yerine process belleği kullanılır.
+
+LISTINGS: Dict[str, Dict[str, Any]] = {}
+OTP_STORE: Dict[str, str] = {}          # phone(digits) -> 4 haneli kod
+VERIFIED_PHONES: set = set()            # dogrulanmis telefonlar (digits)
+
+
+# ==========================================================================
+# 5) PYDANTIC ŞEMALARI
+# ==========================================================================
+
+class OtpSendRequest(BaseModel):
     phone: str
-    code: str
 
-class MessagePayload(BaseModel):
-    listing_id: str
-    sender_phone: str = Field(min_length=10)
-    message: str = Field(min_length=1, max_length=1000)
 
-class SubscribePayload(BaseModel):
-    phone: str = Field(min_length=10)
-    payment_reference: str = Field(min_length=3)
+class OtpVerifyRequest(BaseModel):
+    phone: str
+    code: str = Field(min_length=4, max_length=4)
 
-@app.post("/api/auth/register")
-def register(payload: RegisterPayload):
-    phone = re.sub(r"[\s()-]", "", payload.phone)
-    if not re.fullmatch(r"(?:\+90|0)?5\d{9}", phone):
-        return JSONResponse({"ok": False, "message": "Geçerli bir cep telefonu girin."}, status_code=400)
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", payload.email):
-        return JSONResponse({"ok": False, "message": "Geçerli bir e-posta adresi girin."}, status_code=400)
-    if any(u["phone"] == phone or u["email"] == payload.email.lower() for u in USERS):
-        return JSONResponse({"ok": False, "message": "Bu telefon veya e-posta zaten kayıtlı."}, status_code=409)
-    USERS.append({"id": str(uuid.uuid4()), "first_name": payload.first_name, "last_name": payload.last_name, "name": payload.first_name + " " + payload.last_name, "email": payload.email.lower(), "phone": phone, "role": payload.role, "verified": False, "phone_verified": False, "email_verified": False, "verify_channel": payload.verify_channel, "otp": "1234", "password": payload.password})
-    channel = "SMS" if payload.verify_channel == "sms" else "e-posta"
-    return {"ok": True, "message": f"{channel} doğrulama kodu gönderildi: 1234", "phone": phone, "email": payload.email.lower()}
 
-@app.post("/api/auth/verify")
-def verify_registration(payload: VerifyPayload):
-    phone = re.sub(r"[\s()-]", "", payload.phone)
-    user = next((u for u in USERS if u["phone"] == phone), None)
-    if not user or payload.code != "1234":
-        return JSONResponse({"ok": False, "message": "Kod hatalı veya süresi doldu."}, status_code=400)
-    user["verified"] = True
-    user["phone_verified"] = user.get("verify_channel") == "sms"
-    user["email_verified"] = user.get("verify_channel") == "email"
-    user.pop("otp", None)
-    return {"ok": True, "message": "Telefon doğrulandı. Hesabınız aktif."}
+class ListingCreateRequest(BaseModel):
+    phone: str
+    brand: str
+    model: str
+    year: int = Field(ge=1990, le=_THIS_YEAR + 1)
+    engine_package: Optional[str] = ""
+    color: str
+    part_category: str
+    description: str = Field(min_length=10, max_length=800)
+    province: str
+    province_id: Optional[int] = None
+    district: str
+    ai_filled: bool = False
+    image_filename: Optional[str] = None
 
-@app.post("/api/subscription/subscribe")
-def subscribe(payload: SubscribePayload):
-    phone = re.sub(r"[\s()-]", "", payload.phone)
-    user = next((u for u in USERS if u["phone"] == phone and u.get("verified")), None)
-    if not user or user.get("role") != "seller":
-        return JSONResponse({"ok": False, "message": "Önce doğrulanmış satıcı hesabı açmalısınız."}, status_code=403)
-    # MVP ödeme sağlayıcısı entegrasyon noktası: gerçek ödeme onayı burada doğrulanır.
-    PREMIUM_PHONES.add(phone)
-    user["premium"] = True
-    return {"ok": True, "message": "Premium abonelik aktif edildi.", "premium": True}
+    @field_validator("brand")
+    @classmethod
+    def _brand_must_exist(cls, v: str) -> str:
+        if v not in CAR_DATA:
+            raise ValueError("Geçersiz marka.")
+        return v
 
-@app.get("/", response_class=HTMLResponse)
-def home():
-    return HTMLResponse(INDEX_HTML)
+    @field_validator("color")
+    @classmethod
+    def _color_must_exist(cls, v: str) -> str:
+        if v not in COLORS:
+            raise ValueError("Geçersiz renk.")
+        return v
 
-@app.get("/api/config")
-def config():
-    return {"vehicles": VEHICLES, "vehicle_details": VEHICLE_DETAILS, "years": YEARS, "colors": COLORS, "categories": CATEGORIES, "category_groups": PART_GROUPS}
+    @field_validator("part_category")
+    @classmethod
+    def _category_must_exist(cls, v: str) -> str:
+        if v not in PART_CATEGORIES:
+            raise ValueError("Geçersiz parça kategorisi.")
+        return v
+
+
+class OfferCreateRequest(BaseModel):
+    seller_name: str = Field(min_length=2, max_length=80)
+    seller_phone: str
+    price: float = Field(gt=0, le=10_000_000)
+    message: Optional[str] = Field(default="", max_length=500)
+
+
+# ==========================================================================
+# 6) FASTAPI UYGULAMASI
+# ==========================================================================
+
+app = FastAPI(title="Parça İste — Tersine İlan Pazarı", version="1.0.0")
+
+
+@app.get("/health")
+def health() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/api/meta")
+def get_meta() -> Dict[str, Any]:
+    """Formu doldurmak için gereken tüm sabit veriler tek seferde döner."""
+    return {
+        "brands": CAR_DATA,
+        "colors": COLORS,
+        "categories": PART_CATEGORIES,
+        "years": YEARS,
+    }
+
+
+@app.post("/api/ai-analyze")
+async def ai_analyze(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """'AI ile Doldur' simülasyonu: dosya adına göre araç/parça tahmini üretir."""
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="Dosya bulunamadı.")
+    # Gerçek bir görsel yükleme senaryosunu simüle etmek için içerik okunur
+    # (ancak analiz SADECE dosya adına göre yapılır; bkz. modül üstü not).
+    content = await file.read()
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya çok büyük (maks 15MB).")
+    result = simulate_ai_vision(file.filename)
+    result["source_filename"] = file.filename
+    return result
+
+
+@app.post("/api/otp/send")
+def otp_send(payload: OtpSendRequest) -> Dict[str, Any]:
+    try:
+        phone = normalize_phone(payload.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    code = gen_otp_code()
+    OTP_STORE[phone] = code
+    # NOT: Gerçek bir SMS sağlayıcısı (Netgsm/Twilio vb.) entegre değildir.
+    # Bu yüzden demo amaçlı kod, yanıt içinde döndürülür.
+    return {
+        "success": True,
+        "phone_display": format_phone(phone),
+        "message": f"{format_phone(phone)} numarasına doğrulama kodu gönderildi (simülasyon).",
+        "demo_code": code,
+    }
+
+
+@app.post("/api/otp/verify")
+def otp_verify(payload: OtpVerifyRequest) -> Dict[str, Any]:
+    try:
+        phone = normalize_phone(payload.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    expected = OTP_STORE.get(phone)
+    if not expected or expected != payload.code:
+        raise HTTPException(status_code=400, detail="Kod hatalı veya süresi dolmuş.")
+    VERIFIED_PHONES.add(phone)
+    return {"success": True, "phone_display": format_phone(phone)}
+
+
+def _public_listing(listing: Dict[str, Any], is_premium: bool) -> Dict[str, Any]:
+    """İlanı satıcı tarafına döndürmeden önce premium kilidine göre süzer."""
+    out = dict(listing)
+    out["offer_count"] = len(listing.get("offers", []))
+    out.pop("offers", None)
+    if is_premium:
+        out["phone_display"] = format_phone(listing["phone"])
+        out["locked"] = False
+    else:
+        out["phone_display"] = mask_phone(listing["phone"])
+        out["locked"] = True
+    out.pop("phone", None)
+    return out
+
 
 @app.get("/api/listings")
-def get_listings():
-    safe = []
-    for item in LISTINGS:
-        view = dict(item)
-        view.pop("phone", None)
-        view["contact_status"] = "Alıcı onayından sonra açılır"
-        safe.append(view)
-    return {"listings": safe, "count": len(safe)}
+def list_listings(
+    is_premium: bool = False,
+    province: Optional[str] = None,
+    brand: Optional[str] = None,
+    category: Optional[str] = None,
+    status: str = "active",
+) -> List[Dict[str, Any]]:
+    items = list(LISTINGS.values())
+    if status:
+        items = [x for x in items if x["status"] == status]
+    if province:
+        items = [x for x in items if x["province"] == province]
+    if brand:
+        items = [x for x in items if x["brand"] == brand]
+    if category:
+        items = [x for x in items if x["part_category"] == category]
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return [_public_listing(x, is_premium) for x in items]
 
-@app.post("/api/listings")
-def create_listing(payload: ListingPayload):
-    details = VEHICLE_DETAILS.get(payload.brand, {}).get(payload.model)
-    if not details or int(payload.year) not in YEARS or payload.trim not in details["packages"]:
-        return JSONResponse({"ok": False, "message": "Araç, yıl veya paket seçimi geçersiz."}, status_code=400)
-    normalized_phone = re.sub(r"[\s()-]", "", payload.phone)
-    if not re.fullmatch(r"(?:\+90|0)?5\d{9}", normalized_phone):
-        return JSONResponse({"ok": False, "message": "Geçerli bir cep telefonu girin."}, status_code=400)
-    if not any(u.get("phone") == normalized_phone and u.get("phone_verified") for u in USERS):
-        return JSONResponse({"ok": False, "message": "İlan vermek için telefon SMS doğrulaması zorunludur."}, status_code=403)
-    listing = {"id": str(uuid.uuid4()), **payload.model_dump(), "created_at": "Az önce", "offers": 0, "buyer_phone_verified": True, "contact_unlocked": False}
-    LISTINGS.insert(0, listing)
-    return {"ok": True, "listing": listing}
 
-@app.post("/api/verify-phone")
-def verify_phone(phone: str = Form(...)):
-    normalized = re.sub(r"[\s()-]", "", phone)
-    valid = bool(re.fullmatch(r"(?:\+90|0)?5\d{9}", normalized))
-    return {"ok": valid, "message": "Simülasyon kodu gönderildi: 1234" if valid else "Geçerli bir cep telefonu girin."}
-
-@app.post("/api/ai-vision")
-async def ai_vision(file: UploadFile = File(...)):
-    filename = (file.filename or "").lower()
-    await file.read()
-    if "far" in filename:
-        result = {"brand": "Volkswagen", "model": "Golf", "color": "Beyaz", "category": "Far", "description": "Görsel analizine göre araç farında hasar / kırık tespit edildi. Uyumlu çıkma veya orijinal parça aranıyor."}
-    elif "tampon" in filename:
-        result = {"brand": "Renault", "model": "Clio", "color": "Kırmızı", "category": "Tampon", "description": "Görsel analizine göre ön tamponda deformasyon ve çizik tespit edildi. Kırmızı renk tampon aranıyor."}
-    else:
-        result = {"brand": "Fiat", "model": "Egea", "color": "Gri", "category": "Kaporta", "description": "Görsel analizine göre kaporta parçasında hasar tespit edildi. Uyumlu çıkma parça aranıyor."}
-    return {"ok": True, "confidence": 0.94, "result": result}
-
-@app.post("/api/offers")
-def create_offer(payload: OfferPayload):
-    seller_phone = re.sub(r"[\s()-]", "", payload.seller_phone)
-    if seller_phone not in PREMIUM_PHONES:
-        return JSONResponse({"ok": False, "message": "Teklif vermek için ücretli Premium abonelik gereklidir."}, status_code=403)
-    listing = next((x for x in LISTINGS if x["id"] == payload.listing_id), None)
+@app.get("/api/listings/{listing_id}")
+def get_listing(listing_id: str, is_premium: bool = False) -> Dict[str, Any]:
+    listing = LISTINGS.get(listing_id)
     if not listing:
-        return JSONResponse({"ok": False, "message": "İlan bulunamadı."}, status_code=404)
-    offer = {"id": str(uuid.uuid4()), "created_at": "Az önce", "approved": False, **payload.model_dump()}
-    OFFERS.append(offer)
-    listing["offers"] += 1
-    return {"ok": True, "status": "pending", "message": "Teklif alıcı onayına gönderildi; tutar ve iletişim bilgileri gizlidir."}
+        raise HTTPException(status_code=404, detail="İlan bulunamadı.")
+    out = _public_listing(listing, is_premium)
+    offers = list(listing.get("offers", []))
+    offers.sort(key=lambda o: o["price"])
+    out["offers"] = offers if is_premium else [
+        {**o, "seller_phone": mask_phone(o["seller_phone"])} for o in offers
+    ]
+    return out
 
-@app.post("/api/messages")
-def send_message(payload: MessagePayload):
-    phone = re.sub(r"[\s()-]", "", payload.sender_phone)
-    listing = next((x for x in LISTINGS if x["id"] == payload.listing_id), None)
+
+@app.post("/api/listings", status_code=201)
+def create_listing(payload: ListingCreateRequest) -> Dict[str, Any]:
+    try:
+        phone = normalize_phone(payload.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if phone not in VERIFIED_PHONES:
+        raise HTTPException(
+            status_code=403,
+            detail="Telefon numarası doğrulanmamış. Önce SMS kodunu doğrulayın.",
+        )
+    if payload.model not in CAR_DATA.get(payload.brand, []):
+        raise HTTPException(status_code=400, detail="Model, seçilen markaya ait değil.")
+
+    listing_id = new_id()
+    listing = {
+        "id": listing_id,
+        "brand": payload.brand,
+        "model": payload.model,
+        "year": payload.year,
+        "engine_package": (payload.engine_package or "").strip(),
+        "color": payload.color,
+        "part_category": payload.part_category,
+        "description": payload.description.strip(),
+        "province": payload.province,
+        "province_id": payload.province_id,
+        "district": payload.district,
+        "phone": phone,
+        "ai_filled": payload.ai_filled,
+        "image_filename": payload.image_filename,
+        "status": "active",
+        "created_at": now_iso(),
+        "offers": [],
+    }
+    LISTINGS[listing_id] = listing
+    return _public_listing(listing, is_premium=True) | {"phone_display": format_phone(phone)}
+
+
+@app.post("/api/listings/{listing_id}/offers", status_code=201)
+def create_offer(listing_id: str, payload: OfferCreateRequest) -> Dict[str, Any]:
+    listing = LISTINGS.get(listing_id)
     if not listing:
-        return JSONResponse({"ok": False, "message": "İlan bulunamadı."}, status_code=404)
-    item = {"id": str(uuid.uuid4()), "listing_id": payload.listing_id, "sender_phone": phone, "message": payload.message, "created_at": "Az önce"}
-    MESSAGES.append(item)
-    return {"ok": True, "message": "Mesaj platform üzerinden gönderildi.", "item": item}
+        raise HTTPException(status_code=404, detail="İlan bulunamadı.")
+    if listing["status"] != "active":
+        raise HTTPException(status_code=400, detail="Bu ilan artık aktif değil.")
+    try:
+        seller_phone = normalize_phone(payload.seller_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    offer = {
+        "id": new_id(),
+        "seller_name": payload.seller_name.strip(),
+        "seller_phone": seller_phone,
+        "seller_phone_display": format_phone(seller_phone),
+        "price": round(payload.price, 2),
+        "message": (payload.message or "").strip(),
+        "created_at": now_iso(),
+    }
+    listing["offers"].append(offer)
+    return offer
 
-@app.get("/api/messages/{listing_id}")
-def get_messages(listing_id: str, phone: str):
-    normalized = re.sub(r"[\s()-]", "", phone)
-    return {"ok": True, "messages": [{"message": m["message"], "created_at": m["created_at"], "mine": m["sender_phone"] == normalized} for m in MESSAGES if m["listing_id"] == listing_id]}
 
-@app.get("/api/locations")
-def locations():
-    return {"provinces": TURKEY_LOCATIONS, "source": "embedded-turkey-81-provinces"}
+@app.patch("/api/listings/{listing_id}/close")
+def close_listing(listing_id: str, payload: OtpSendRequest) -> Dict[str, Any]:
+    """Alıcı kendi ilanını kapatır (payload.phone == ilan sahibinin telefonu)."""
+    listing = LISTINGS.get(listing_id)
+    if not listing:
+        raise HTTPException(status_code=404, detail="İlan bulunamadı.")
+    try:
+        phone = normalize_phone(payload.phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if phone != listing["phone"]:
+        raise HTTPException(status_code=403, detail="Bu ilanı kapatma yetkiniz yok.")
+    listing["status"] = "closed"
+    return {"success": True}
 
-@app.get("/api/buyer/offers/{listing_id}")
-def buyer_offers(listing_id: str, phone: str):
-    listing = next((x for x in LISTINGS if x["id"] == listing_id), None)
-    if not listing or re.sub(r"[\s()-]", "", phone) != re.sub(r"[\s()-]", "", listing["phone"]):
-        return JSONResponse({"ok": False, "message": "İlan ve telefon eşleşmedi."}, status_code=403)
-    return {"ok": True, "offers": [{k: v for k, v in o.items() if o.get("approved") or k not in {"amount", "seller_name", "seller_image", "note"}} for o in OFFERS if o["listing_id"] == listing_id]}
 
-@app.post("/api/offers/{offer_id}/approve")
-def approve_offer(offer_id: str, phone: str = Form(...)):
-    offer = next((x for x in OFFERS if x["id"] == offer_id), None)
-    listing = next((x for x in LISTINGS if x["id"] == (offer or {}).get("listing_id")), None)
-    if not offer or not listing or re.sub(r"[\s()-]", "", phone) != re.sub(r"[\s()-]", "", listing["phone"]):
-        return JSONResponse({"ok": False, "message": "Onay yetkisi bulunamadı."}, status_code=403)
-    offer["approved"] = True
-    listing["contact_unlocked"] = True
-    return {"ok": True, "message": "Teklif onaylandı; iletişim bilgileri artık alıcıya açıldı.", "buyer_phone": listing["phone"], "seller_phone": offer.get("seller_phone", ""), "seller_name": offer.get("seller_name", "")}
+@app.get("/api/my-listings")
+def my_listings(phone: str) -> List[Dict[str, Any]]:
+    try:
+        norm = normalize_phone(phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    items = [x for x in LISTINGS.values() if x["phone"] == norm]
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    result = []
+    for x in items:
+        item = dict(x)
+        item["phone_display"] = format_phone(x["phone"])
+        offers = sorted(x["offers"], key=lambda o: o["price"])
+        item["offers"] = offers
+        item["offer_count"] = len(offers)
+        result.append(item)
+    return result
 
-INDEX_HTML = r'''<!doctype html>
+
+# ==========================================================================
+# 7) FRONTEND — Tek parça HTML / Tailwind CSS / Vanilla JS
+# ==========================================================================
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return INDEX_HTML
+
+
+INDEX_HTML = r"""<!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ParçaTeklif — Aradığın Parça, En İyi Teklif</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parça İste — Araç Aksesuar ve Modifiye Parça Talep Pazarı</title>
+<meta name="description" content="Tersine ilan pazarı: aracın için aradığın aksesuar veya modifiye parçasını ücretsiz ilan et, aksesuarcı ve modifiye ustaları sana teklif versin.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
 <script src="https://cdn.tailwindcss.com"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-<script>tailwind.config={theme:{extend:{fontFamily:{sans:['DM Sans','sans-serif'],display:['Space Grotesk','sans-serif']},colors:{ink:'#152235',brand:'#ef6c3c',cream:'#fffaf5',mint:'#dff5e9'}}}};</script>
-<style>body{background:#fffaf5;color:#152235}.glass{background:rgba(255,255,255,.78);backdrop-filter:blur(14px)}.grid-bg{background-image:linear-gradient(#f3e9df 1px,transparent 1px),linear-gradient(90deg,#f3e9df 1px,transparent 1px);background-size:32px 32px}.field{width:100%;border:1px solid #eadfd5;border-radius:12px;padding:.72rem .85rem;background:#fff;outline:none;transition:.2s}.field:focus{border-color:#ef6c3c;box-shadow:0 0 0 3px #ef6c3c22}.chip{border:1px solid #eadfd5;border-radius:999px;padding:.38rem .7rem;font-size:.8rem;background:#fff}.locked{filter:blur(4px);user-select:none}.toast{animation:toast 3.5s forwards}@keyframes toast{0%,100%{opacity:0;transform:translateY(12px)}10%,85%{opacity:1;transform:translateY(0)}} .live-ad{position:fixed;right:18px;bottom:18px;z-index:30;width:280px;min-height:150px;border-radius:22px;padding:20px;color:#fff;background:linear-gradient(135deg,#152235,#ef6c3c);box-shadow:0 18px 40px #15223545;overflow:hidden}.ad-scene{position:absolute;inset:18px;display:flex;flex-direction:column;gap:7px;opacity:0;animation:adscene 12s infinite}.ad-scene i{font-size:28px;color:#ffe4d6}.ad-scene b{font-size:18px;font-family:Space Grotesk}.ad-scene span{font-size:12px;color:#ffe4d6}.scene-two{animation-delay:4s}.scene-three{animation-delay:8s}.ad-copy{position:absolute;bottom:12px;left:18px;right:18px;opacity:.85;display:flex;flex-direction:column;gap:2px}.ad-copy strong{font-size:11px}.ad-copy small{font-size:10px}@keyframes adscene{0%,28%{opacity:1;transform:translateY(0)}33%,100%{opacity:0;transform:translateY(8px)}}@media(max-width:640px){.live-ad{position:relative;right:auto;bottom:auto;margin:0 16px 18px;width:auto;height:145px}}
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: '#1B1D21',
+          paper: '#EEF0F2',
+          panel: '#FFFFFF',
+          steel: '#5B6472',
+          accent: '#F2A71B',
+          accentdark: '#C97F0A',
+          gold: '#B8862E',
+          success: '#1F8A5F',
+          danger: '#C43B3B',
+        },
+        fontFamily: {
+          display: ['"Space Grotesk"', 'sans-serif'],
+          body: ['"IBM Plex Sans"', 'sans-serif'],
+        },
+      }
+    }
+  }
+</script>
+<style>
+  :root{
+    --ink:#1B1D21; --paper:#EEF0F2; --steel:#5B6472; --accent:#F2A71B;
+    --accentdark:#C97F0A; --gold:#B8862E; --success:#1F8A5F; --danger:#C43B3B;
+  }
+  html{ scroll-behavior:smooth; }
+  body{ -webkit-font-smoothing:antialiased; }
+  select, input, textarea, button { font-family:'IBM Plex Sans',sans-serif; }
+
+  .nav-btn{ padding:0.5rem 0.9rem; border-radius:0.375rem; color:rgba(255,255,255,.78); font-weight:500; font-size:.9rem; transition:background .15s,color .15s; }
+  .nav-btn:hover{ background:rgba(255,255,255,.08); color:#fff; }
+  .nav-btn-active{ background:var(--accent); color:var(--ink); }
+
+  .mode-btn{ background:#fff; color:var(--steel); }
+  .mode-btn-active{ background:var(--ink) !important; color:#fff !important; }
+
+  .step-dot{ width:2.1rem;height:2.1rem;border-radius:9999px;display:flex;align-items:center;justify-content:center;
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:.85rem;background:#fff;
+    border:2px solid rgba(0,0,0,.12);color:var(--steel); transition:all .2s; flex-shrink:0; }
+  .step-dot-active{ border-color:var(--accent); background:var(--accent); color:var(--ink); }
+  .step-dot-done{ border-color:var(--success); background:var(--success); color:#fff; }
+  .step-line{ flex:1; height:2px; background:rgba(0,0,0,.12); }
+
+  .wizard-step{ animation: fadein .25s ease; }
+  @keyframes fadein{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);} }
+  @media (prefers-reduced-motion: reduce){ .wizard-step{ animation:none; } html{scroll-behavior:auto;} }
+
+  .otp-input{ font-family:'Space Grotesk',monospace; letter-spacing:0.6em; text-align:center; font-size:1.4rem; }
+
+  ::-webkit-scrollbar{ width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(0,0,0,.15); border-radius:4px; }
+
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
+    outline:2px solid var(--accent); outline-offset:2px;
+  }
+
+  .hero-fade{ animation: heroIn .6s ease both; }
+  .hero-fade.d2{ animation-delay:.1s; }
+  .hero-fade.d3{ animation-delay:.2s; }
+  @keyframes heroIn{ from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
+  @media (prefers-reduced-motion: reduce){ .hero-fade{ animation:none; } }
 </style>
 </head>
-<body class="font-sans">
-<header class="sticky top-0 z-20 border-b border-orange-100/80 glass"><div class="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center"><a href="#top" class="flex items-center gap-2"><span class="w-9 h-9 rounded-xl bg-brand text-white grid place-items-center"><i class="fa-solid fa-wrench"></i></span><span class="font-display font-bold text-xl">Parça<span class="text-brand">Teklif</span></span></a><nav class="hidden md:flex gap-6 text-sm font-semibold"><a href="#create" class="hover:text-brand">İlan Ver</a><a href="#pool" class="hover:text-brand">İlan Havuzu</a><a href="#how" class="hover:text-brand">Nasıl Çalışır?</a></nav><button onclick="registerUser()" class="bg-brand text-white px-4 py-2 rounded-xl text-sm font-semibold">Kayıt Ol <i class="fa-solid fa-user-plus ml-1"></i></button></div></header>
-<div class="live-ad" aria-label="ParçaTeklif canlı reklam"><div class="ad-scene scene-one"><i class="fa-solid fa-face-smile-beam"></i><b>Aradığını bulamayan alıcı</b><span>Parçasını arıyor...</span></div><div class="ad-scene scene-two"><i class="fa-solid fa-screwdriver-wrench"></i><b>Güvenilir usta bulundu</b><span>Teklifini gönderiyor...</span></div><div class="ad-scene scene-three"><i class="fa-solid fa-circle-check"></i><b>Parça bulundu!</b><span>Herkes mutlu, araç yeniden yollarda.</span></div><div class="ad-copy"><strong>Aradığın parça, doğru teklif, mutlu sonuç.</strong><small>ParçaTeklif ile Türkiye'nin esnaf ağına ulaş.</small></div></div><main id="top"><section class="grid-bg"><div class="max-w-6xl mx-auto px-4 py-16 md:py-24 grid md:grid-cols-[1.1fr_.9fr] gap-12 items-center"><div><div class="inline-flex items-center gap-2 bg-mint text-emerald-800 px-3 py-1.5 rounded-full text-xs font-bold mb-5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Türkiye'nin parça teklif ağı</div><h1 class="font-display text-5xl md:text-7xl font-bold leading-[.98] tracking-tight">Parçanı ara.<br><span class="text-brand">Teklifleri topla.</span></h1><p class="mt-6 text-lg text-slate-600 max-w-lg">İhtiyacın olan yedek parçayı tarif et, Türkiye'nin dört bir yanındaki çıkmacı ve sanayi esnafından teklifleri tek yerde karşılaştır.</p><div class="mt-8 flex flex-wrap gap-3"><button onclick="scrollToId('create')" class="bg-brand text-white px-5 py-3 rounded-xl font-bold shadow-lg shadow-orange-200">İlanını Oluştur <i class="fa-solid fa-plus ml-1"></i></button><button onclick="scrollToId('pool')" class="bg-white border border-orange-100 px-5 py-3 rounded-xl font-bold">İlanları Keşfet</button></div><div class="mt-8 flex gap-6 text-sm text-slate-500"><span><b class="text-ink text-lg">81</b> ilde</span><span><b class="text-ink text-lg">10 dk</b> içinde teklifler</span><span><b class="text-ink text-lg">%100</b> ücretsiz</span></div></div><div class="relative"><div class="absolute -inset-4 bg-orange-200/40 rounded-[2rem] rotate-3"></div><div class="relative bg-ink rounded-[2rem] p-6 md:p-8 text-white shadow-2xl"><div class="flex justify-between items-center mb-8"><span class="text-sm text-slate-300">Canlı teklif akışı</span><span class="text-xs bg-emerald-400/20 text-emerald-300 px-2 py-1 rounded-full">● Aktif</span></div><div class="bg-white/10 rounded-2xl p-4 mb-3"><div class="flex justify-between text-xs text-slate-300"><span>Volkswagen Golf · 2018</span><span>İstanbul</span></div><div class="font-bold mt-2">Sağ ön far aranıyor</div><div class="flex gap-2 mt-3"><span class="chip bg-white/10 border-white/10 text-slate-200">Far</span><span class="chip bg-white/10 border-white/10 text-slate-200">Beyaz</span></div></div><div class="bg-brand rounded-2xl p-4 ml-8 shadow-lg"><div class="flex justify-between text-xs text-orange-100"><span>Yeni teklif</span><span>Az önce</span></div><div class="font-bold mt-2">Mehmet Usta · İvedik</div><div class="text-2xl font-display font-bold mt-1">₺4.250 <span class="text-xs font-normal text-orange-100">gizli teklif</span></div></div><div class="mt-7 flex items-center gap-3 text-sm text-slate-300"><i class="fa-solid fa-shield-halved text-emerald-300"></i> Telefon doğrulamalı güvenli ilanlar</div></div></div></div></section><section id="authGate" class="max-w-6xl mx-auto px-4 py-16"><div class="max-w-2xl mx-auto bg-white border border-orange-100 rounded-3xl p-8 text-center shadow-sm"><i class="fa-solid fa-user-shield text-4xl text-brand"></i><h2 class="font-display text-3xl font-bold mt-4">İlanları görmek için kayıt ol</h2><p class="text-slate-500 mt-3">Parça arayan alıcıları ve teklif veren güvenilir esnafları korumak için telefon doğrulaması gerekiyor. Kayıt ücretsizdir.</p><button onclick="registerUser()" class="bg-brand text-white px-6 py-3 rounded-xl font-bold mt-6">Telefonumu Doğrula ve Başla</button><p class="text-xs text-slate-400 mt-4">SMS doğrulama demo kodu: 1234</p></div></section>
-<section id="create" style="display:none" class="max-w-6xl mx-auto px-4 py-16"><div class="flex justify-between items-end mb-6"><div><p class="text-brand font-bold text-sm uppercase tracking-widest">01 / Alıcı</p><h2 class="font-display text-3xl md:text-4xl font-bold mt-1">İhtiyacını anlat</h2><p class="text-slate-500 mt-2">İlanın esnaf ağına anında ulaşsın.</p></div><span class="hidden sm:block text-sm text-slate-400"><i class="fa-solid fa-lock mr-1"></i> Ücretsiz ve güvenli</span></div><div class="grid lg:grid-cols-[1.4fr_.6fr] gap-6"><form id="listingForm" class="bg-white border border-orange-100 rounded-3xl p-5 md:p-8 shadow-sm"><div class="flex items-center gap-2 mb-6"><span class="bg-brand text-white w-7 h-7 rounded-full grid place-items-center text-sm font-bold">1</span><h3 class="font-bold">Araç bilgileri</h3></div><div class="grid sm:grid-cols-2 gap-4"><label class="text-sm font-semibold">Marka<select id="brand" class="field mt-1" required><option value="">Marka seçin</option></select></label><label class="text-sm font-semibold">Model<select id="model" class="field mt-1" required disabled><option value="">Önce marka seçin</option></select></label><label class="text-sm font-semibold">Model yılı<select id="year" class="field mt-1" required><option value="">Yıl seçin</option></select></label><label class="text-sm font-semibold">Motor / paket<select id="trim" class="field mt-1" required><option value="">Önce model seçin</option></select></label><label class="text-sm font-semibold sm:col-span-2">Araç rengi<select id="color" class="field mt-1" required><option value="">Renk seçin</option></select></label></div><div class="border-t border-orange-100 my-7"></div><div class="flex items-center gap-2 mb-6"><span class="bg-brand text-white w-7 h-7 rounded-full grid place-items-center text-sm font-bold">2</span><h3 class="font-bold">Parça ve konum</h3></div><div class="grid sm:grid-cols-2 gap-4"><label class="text-sm font-semibold">Parça kategorisi<select id="category" class="field mt-1" required><option value="">Kategori seçin</option></select></label><label class="text-sm font-semibold">İl<select id="province" class="field mt-1" required><option value="">İl seçin</option></select></label><label class="text-sm font-semibold">İlçe<select id="district" class="field mt-1" required disabled><option value="">Önce il seçin</option></select></label><label class="text-sm font-semibold sm:col-span-2">Açıklama<textarea id="description" class="field mt-1 min-h-24" placeholder="Aradığınız parçanın durumu, OEM kodu veya notlarınız..." required></textarea></label></div><div class="border-t border-orange-100 my-7"></div><div class="flex items-center gap-2 mb-6"><span class="bg-brand text-white w-7 h-7 rounded-full grid place-items-center text-sm font-bold">3</span><h3 class="font-bold">Görsel ve doğrulama</h3></div><div class="grid sm:grid-cols-2 gap-4"><div><label class="text-sm font-semibold">Görsel yükle <span class="text-brand">AI ile doldur</span><input id="image" type="file" accept="image/*" class="field mt-1" /></label><div id="aiStatus" class="text-xs text-slate-500 mt-2"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i> Dosya adındaki ipuçlarından demo analiz yapılır.</div></div><div><label class="text-sm font-semibold">Alıcı fotoğrafı <span class="text-slate-400">(opsiyonel)</span><input id="buyerImage" type="file" accept="image/*" class="field mt-1"></label><label class="text-sm font-semibold">Cep telefonu<input id="phone" class="field mt-1" placeholder="05__ ___ __ __" required></label><button type="button" onclick="verifyPhone()" class="text-xs text-brand font-bold mt-2">SMS doğrulama kodu gönder</button><div id="phoneStatus" class="text-xs mt-1"></div></div></div><button class="w-full bg-ink hover:bg-slate-800 text-white rounded-xl py-3.5 mt-7 font-bold" type="submit">İlanı Yayınla <i class="fa-solid fa-paper-plane ml-2"></i></button></form><aside class="space-y-4"><div class="bg-mint rounded-3xl p-6"><i class="fa-solid fa-wand-magic-sparkles text-2xl text-emerald-700"></i><h3 class="font-display text-xl font-bold mt-4">AI ile daha hızlı</h3><p class="text-sm text-emerald-900/70 mt-2">Parçanın fotoğrafını yükle. Demo AI; araç, renk ve parça kategorisini otomatik doldursun.</p></div><div class="bg-white border border-orange-100 rounded-3xl p-6"><h3 class="font-bold">Neden telefon doğrulama?</h3><p class="text-sm text-slate-500 mt-2">Esnafların doğru alıcıya ulaşmasını ve ilanların güvenilir kalmasını sağlıyoruz.</p><div class="mt-4 flex gap-2 text-xs"><span class="chip"><i class="fa-solid fa-check text-emerald-500 mr-1"></i> Spam yok</span><span class="chip"><i class="fa-solid fa-check text-emerald-500 mr-1"></i> Ücretsiz</span></div></div></aside></div></section>
-<section id="pool" style="display:none" class="bg-[#f5eee7] py-16"><div class="max-w-6xl mx-auto px-4"><div class="flex flex-col md:flex-row justify-between md:items-end gap-5 mb-7"><div><p class="text-brand font-bold text-sm uppercase tracking-widest">02 / Satıcı</p><h2 class="font-display text-3xl md:text-4xl font-bold mt-1">İlan havuzu</h2><p class="text-slate-500 mt-2">İhtiyaca uygun parçayı bul, teklifini bırak.</p></div><label class="flex items-center gap-3 bg-white rounded-2xl p-3 border border-orange-100 cursor-pointer"><span class="text-sm font-bold"><i class="fa-solid fa-store mr-2 text-brand"></i>Esnaf Modu</span><span class="relative"><input id="premiumToggle" type="checkbox" class="sr-only" onchange="togglePremium()"><span class="block w-12 h-7 bg-slate-300 rounded-full"></span><span id="toggleDot" class="absolute top-1 left-1 w-5 h-5 bg-white rounded-full transition"></span></span><span id="premiumLabel" class="text-xs text-slate-500">Ücretsiz</span></label></div><div id="premiumBanner" class="hidden bg-ink text-white rounded-2xl px-5 py-4 mb-5 text-sm"><label class="inline-flex items-center gap-2 mr-4"><i class="fa-solid fa-camera text-yellow-300"></i> Satıcı fotoğrafı (zorunlu) <input id="sellerImage" type="file" accept="image/*" class="text-xs"></label><i class="fa-solid fa-crown text-yellow-300 mr-2"></i><b>Premium mod aktif.</b> Telefon ve doğrudan iletişim butonları açıldı.</div><div id="listingGrid" class="grid lg:grid-cols-2 gap-4"></div></div></section>
-<section id="how" style="display:none" class="max-w-6xl mx-auto px-4 py-16"><div class="text-center max-w-xl mx-auto"><p class="text-brand font-bold text-sm uppercase tracking-widest">03 / Nasıl çalışır?</p><h2 class="font-display text-3xl md:text-4xl font-bold mt-2">Aradığın parça, üç adım uzakta.</h2></div><div class="grid md:grid-cols-3 gap-5 mt-10"><div class="p-6 border border-orange-100 rounded-3xl bg-white"><span class="text-3xl font-display font-bold text-brand">01</span><h3 class="font-bold mt-5">İlanını bırak</h3><p class="text-sm text-slate-500 mt-2">Aracını ve aradığın parçayı seç, konumunu ekle.</p></div><div class="p-6 border border-orange-100 rounded-3xl bg-white"><span class="text-3xl font-display font-bold text-brand">02</span><h3 class="font-bold mt-5">Teklifleri topla</h3><p class="text-sm text-slate-500 mt-2">Çıkmacılar ve esnaf sana gizli fiyat tekliflerini iletsin.</p></div><div class="p-6 border border-orange-100 rounded-3xl bg-white"><span class="text-3xl font-display font-bold text-brand">03</span><h3 class="font-bold mt-5">En iyisini seç</h3><p class="text-sm text-slate-500 mt-2">Premium esnaflarla doğrudan iletişime geç, parçanı al.</p></div></div></section></main><footer class="bg-ink text-slate-300 py-8"><div class="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row justify-between gap-3 text-sm"><span>© 2026 ParçaTeklif MVP</span><span>Alıcılar için ücretsiz · Esnaflar için daha çok erişim</span></div></footer><div id="registerModal" class="hidden fixed inset-0 z-50 bg-ink/60 p-4 overflow-auto"><div class="max-w-md mx-auto mt-8 bg-white rounded-3xl p-6"><div class="flex justify-between items-center"><h2 class="font-display text-2xl font-bold">Kayıt Ol</h2><button onclick="closeRegister()" class="text-slate-400 text-2xl">×</button></div><p class="text-sm text-slate-500 mt-2">İlan vermek ve teklif göndermek için telefon SMS doğrulaması zorunludur.</p><form id="registerForm" class="mt-5 space-y-3"><input id="regFirst" class="field" placeholder="Ad" required><input id="regLast" class="field" placeholder="Soyad" required><input id="regEmail" type="email" class="field" placeholder="E-posta adresi" required><input id="regPhone" class="field" placeholder="Cep telefonu" required><select id="regRole" class="field"><option value="buyer">Alıcı</option><option value="seller">Satıcı / Esnaf</option></select><select id="regChannel" class="field"><option value="sms">SMS ile doğrula (zorunlu)</option><option value="email">E-posta ile doğrula</option></select><input id="regPassword" type="password" class="field" placeholder="Şifre (en az 6 karakter)" minlength="6" required><button class="w-full bg-brand text-white py-3 rounded-xl font-bold">Kayıt oluştur ve kod gönder</button></form><form id="verifyForm" class="hidden mt-4 space-y-3"><input id="verifyCode" class="field" placeholder="Telefon/e-posta doğrulama kodu" required><button class="w-full bg-ink text-white py-3 rounded-xl font-bold">Doğrula ve devam et</button></form><div id="registerStatus" class="text-sm mt-3"></div></div></div><div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 hidden z-50 bg-ink text-white px-5 py-3 rounded-xl shadow-xl text-sm"></div>
-<script>
-let config={}, locations=[], premium=false;
-const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-function unlockApp(){sessionStorage.setItem('parca_auth','1');$('authGate').style.display='none';['create','pool','how'].forEach(id=>$(id).style.display='');toast('Kayıt tamamlandı. İlanlar ve mesajlaşma açıldı.')} function requireAuth(){if(sessionStorage.getItem('parca_auth')!=='1'){toast('Önce ücretsiz kayıt ve telefon doğrulaması yapın.');return false}return true} function registerUser(){$('registerModal').classList.remove('hidden')} function closeRegister(){$('registerModal').classList.add('hidden')} let pendingPhone=''; async function submitRegistration(e){e.preventDefault();const payload={first_name:$('regFirst').value,last_name:$('regLast').value,email:$('regEmail').value,phone:$('regPhone').value,role:$('regRole').value,verify_channel:$('regChannel').value,password:$('regPassword').value};const r=await (await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();$('registerStatus').textContent=r.message||'Kayıt başarısız';if(r.ok){pendingPhone=r.phone;$('registerForm').classList.add('hidden');$('verifyForm').classList.remove('hidden')}} async function submitVerification(e){e.preventDefault();const r=await (await fetch('/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:pendingPhone,code:$('verifyCode').value})})).json();$('registerStatus').textContent=r.message;if(r.ok){closeRegister();unlockApp()}}  function scrollToId(id){$(id).scrollIntoView({behavior:'smooth'})} function toast(msg){const t=$('toast');t.textContent=msg;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),3200)}
-async function init(){if(sessionStorage.getItem('parca_auth')==='1'){setTimeout(()=>{if($('authGate'))$('authGate').style.display='none';['create','pool','how'].forEach(id=>$(id).style.display='')},0)}config=await (await fetch('/api/config')).json();Object.keys(config.vehicles).forEach(x=>$('brand').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));config.colors.forEach(x=>$('color').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));config.categories.forEach(x=>$('category').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));config.years.forEach(y=>$('year').insertAdjacentHTML('beforeend',`<option>${y}</option>`));try{locations=(await (await fetch('/api/locations')).json()).provinces;locations.forEach(p=>$('province').insertAdjacentHTML('beforeend',`<option>${esc(p.name)}</option>`))}catch(e){};loadListings()}
-$('brand').onchange=()=>{$('model').disabled=!$('brand').value;$('model').innerHTML='<option value="">Model seçin</option>';$('trim').disabled=true;$('trim').innerHTML='<option value="">Önce model seçin</option>';(config.vehicles[$('brand').value]||[]).forEach(x=>$('model').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`))};$('model').onchange=()=>{const d=config.vehicle_details[$('brand').value]?.[$('model').value];$('trim').disabled=!d;$('trim').innerHTML='<option value="">Paket seçin</option>';(d?.packages||[]).forEach(x=>$('trim').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`))};$('province').onchange=()=>{const p=locations.find(x=>x.name===$('province').value);$('district').disabled=!p;$('district').innerHTML='<option value="">İlçe seçin</option>';(p?.districts||[]).forEach(x=>$('district').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`))};
-$('image').onchange=async e=>{if(!e.target.files[0])return;$('aiStatus').innerHTML='<i class="fa-solid fa-spinner fa-spin mr-1"></i> Görsel analiz ediliyor...';const f=new FormData();f.append('file',e.target.files[0]);const d=await (await fetch('/api/ai-vision',{method:'POST',body:f})).json();const r=d.result;$('brand').value=r.brand;$('brand').dispatchEvent(new Event('change'));setTimeout(()=>{$('model').value=r.model},0);$('color').value=r.color;$('category').value=r.category;$('description').value=r.description;$('aiStatus').innerHTML='<span class="text-emerald-600"><i class="fa-solid fa-circle-check mr-1"></i> AI analizi tamamlandı (%94 güven)</span>'};
-async function verifyPhone(){const f=new FormData();f.append('phone',$('phone').value);const d=await (await fetch('/api/verify-phone',{method:'POST',body:f})).json();$('phoneStatus').className='text-xs mt-1 '+(d.ok?'text-emerald-600':'text-red-500');$('phoneStatus').textContent=d.message}
-$('listingForm').onsubmit=async e=>{e.preventDefault();const payload={brand:$('brand').value,model:$('model').value,year:$('year').value,trim:$('trim').value,color:$('color').value,category:$('category').value,province:$('province').value,district:$('district').value,description:$('description').value,phone:$('phone').value,buyer_image:$('buyerImage').files[0]?.name||''};const d=await (await fetch('/api/listings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();if(!d.ok)return toast(d.message);toast('İlanın yayınlandı! Esnaflar teklif vermeye başladı.');e.target.reset();$('model').disabled=true;$('district').disabled=true;loadListings();scrollToId('pool')};
-function togglePremium(){premium=$('premiumToggle').checked;$('premiumLabel').textContent=premium?'Premium':'Ücretsiz';$('toggleDot').style.transform=premium?'translateX(20px)':'translateX(0)';$('toggleDot').previousElementSibling.style.background=premium?'#10b981':'';$('premiumBanner').classList.toggle('hidden',!premium);renderListings(window.listings||[])}
-async function loadListings(){window.listings=(await (await fetch('/api/listings')).json()).listings;renderListings(window.listings)}
-function renderListings(items){$('listingGrid').innerHTML=items.length?items.map(x=>`<article class="bg-white rounded-3xl border border-orange-100 p-5 shadow-sm"><div class="flex justify-between gap-3"><div><div class="flex gap-2 flex-wrap"><span class="chip text-brand font-bold">${esc(x.category)}</span><span class="chip"><i class="fa-solid fa-location-dot mr-1 text-slate-400"></i>${esc(x.province)} / ${esc(x.district)}</span></div><h3 class="font-display text-xl font-bold mt-4">${esc(x.brand)} ${esc(x.model)} <span class="text-slate-400 font-sans text-sm">· ${esc(x.year)}</span></h3><p class="text-sm text-slate-500 mt-1">${esc(x.trim)} · ${esc(x.color)}</p></div><span class="text-xs text-slate-400 whitespace-nowrap">${esc(x.created_at)}</span></div><p class="text-sm text-slate-600 mt-4 bg-[#fffaf5] p-3 rounded-xl">${esc(x.description)}</p><div class="border-t border-orange-100 mt-4 pt-4 flex justify-between items-center"><div class="text-xs text-slate-500"><i class="fa-solid fa-lock text-brand mr-2"></i>Telefon ve WhatsApp, alıcı onayından sonra açılır</div><div class="flex gap-2"><button onclick="showOffers('${x.id}')" class="border border-orange-100 text-ink rounded-lg px-3 py-2 text-xs font-bold">Tekliflerim</button><button onclick="openOffer('${x.id}')" class="bg-brand text-white rounded-lg px-3 py-2 text-xs font-bold">Teklif Ver</button><button onclick="messageListing('${x.id}')" class="border border-orange-100 rounded-lg px-3 py-2 text-xs font-bold"><i class="fa-solid fa-message mr-1"></i>Mesaj</button></div></div><div class="mt-3 text-xs text-slate-400"><i class="fa-solid fa-comments mr-1"></i>${x.offers} teklif · ${premium?'Premium iletişim açık':'Sadece Premium aboneler doğrudan iletişim kurabilir'}</div></article>`).join(''):'<div class="col-span-full bg-white rounded-3xl p-10 text-center border border-orange-100"><i class="fa-solid fa-inbox text-4xl text-slate-300"></i><h3 class="font-display text-xl font-bold mt-3">Henüz ilan yok</h3><p class="text-sm text-slate-500 mt-2">İlk alıcı ilanını oluşturduğunda burada görünecek.</p></div>'}
-async function showOffers(id){if(!requireAuth())return;const phone=prompt('İlanı oluştururken kullandığınız telefon:');if(!phone)return;const d=await (await fetch('/api/buyer/offers/'+id+'?phone='+encodeURIComponent(phone))).json();if(!d.ok)return toast(d.message);if(!d.offers.length)return toast('Henüz teklif yok.');const pending=d.offers.map(o=>o.approved?'Onaylandı':'Bekliyor').join(', ');const approve=d.offers.find(o=>!o.approved);if(approve && confirm('Teklifler: '+pending+'\nBir teklifi onaylayıp iletişim bilgilerini açmak ister misiniz?')){const f=new FormData();f.append('phone',phone);const r=await (await fetch('/api/offers/'+approve.id+'/approve',{method:'POST',body:f})).json();toast(r.message)}else toast('Teklif durumu: '+pending)} async function messageListing(id){if(!requireAuth())return;const phone=prompt('Kayıtlı telefonunuz:');if(!phone)return;const text=prompt('Mesajınız:');if(!text)return;const d=await (await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:id,sender_phone:phone,message:text})})).json();toast(d.message||'Mesaj gönderilemedi.')} function contact(phone){if(premium)window.location.href='tel:'+phone.replace(/\D/g,'')};function openOffer(id){if(!requireAuth())return;const amount=prompt('Gizli teklif tutarı (TL):');if(!amount)return;const note=prompt('Kısa notunuz:','Parça temiz ve gönderime hazır.');if(!note)return;const name=prompt('Esnaf / işletme adınız:','Usta Parça');if(!name)return;const sellerImage=$('sellerImage')?.files[0]?.name||'';if(!sellerImage){toast('Teklif göndermek için satıcı fotoğrafı zorunludur.');return}fetch('/api/offers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:id,seller_name:name,amount,note,premium,seller_image:sellerImage,seller_phone:prompt('Doğrulanmış satıcı telefonunuz:','')||''})}).then(r=>r.json()).then(d=>{toast(d.ok?'Teklifiniz alıcı onayına gönderildi; bilgiler onaya kadar gizlidir.':(d.message||'Teklif gönderilemedi.'));loadListings()})}
-$('registerForm').onsubmit=submitRegistration;$('verifyForm').onsubmit=submitVerification;init();
-</script></body></html>'''
+<body class="font-body bg-paper text-ink">
 
+<header class="sticky top-0 z-40 bg-ink text-white border-b-4 border-accent">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
+    <button onclick="showView('home')" class="flex items-center gap-2 font-display font-bold text-lg">
+      <span class="w-8 h-8 rounded-md bg-accent text-ink flex items-center justify-center">
+        <i class="fa-solid fa-magnifying-glass-dollar text-sm"></i>
+      </span>
+      Parça İste
+    </button>
+    <nav class="hidden sm:flex items-center gap-1">
+      <button onclick="showView('home')" data-nav="home" class="nav-btn">Ana Sayfa</button>
+      <button onclick="showView('buyer')" data-nav="buyer" class="nav-btn">İlan Ver</button>
+      <button onclick="showView('seller')" data-nav="seller" class="nav-btn">Satıcı Paneli</button>
+      <button onclick="showView('mylistings')" data-nav="mylistings" class="nav-btn">İlanlarım</button>
+    </nav>
+    <button onclick="toggleMobileNav()" class="sm:hidden text-xl w-9 h-9 flex items-center justify-center" aria-label="Menü">
+      <i class="fa-solid fa-bars"></i>
+    </button>
+  </div>
+  <div id="mobile-nav" class="hidden sm:hidden flex flex-col gap-1 px-4 pb-3 border-t border-white/10 pt-2">
+    <button onclick="showView('home')" data-nav="home" class="nav-btn text-left">Ana Sayfa</button>
+    <button onclick="showView('buyer')" data-nav="buyer" class="nav-btn text-left">İlan Ver</button>
+    <button onclick="showView('seller')" data-nav="seller" class="nav-btn text-left">Satıcı Paneli</button>
+    <button onclick="showView('mylistings')" data-nav="mylistings" class="nav-btn text-left">İlanlarım</button>
+  </div>
+</header>
+
+<main>
+<!-- ============================= ANA SAYFA ============================= -->
+<section id="view-home">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-10 sm:pt-16 pb-12 grid md:grid-cols-2 gap-10 items-center">
+    <div class="hero-fade">
+      <p class="inline-flex items-center gap-2 text-xs font-medium text-accentdark bg-accent/15 px-3 py-1 rounded-full mb-4">
+        <i class="fa-solid fa-arrows-rotate"></i> Tersine ilan pazarı
+      </p>
+      <h1 class="font-display font-bold text-3xl sm:text-4xl lg:text-5xl leading-tight mb-4">
+        Aksesuar ve modifiye parçayı<br>sen iste, usta teklif versin.
+      </h1>
+      <p class="text-steel text-base sm:text-lg mb-6 max-w-md">
+        Aracın için aradığın jant, body kit, LED far, ses sistemi veya herhangi bir
+        aksesuar / modifiye parçasını ücretsiz ilan et. Çevrendeki aksesuarcı ve
+        modifiye ustaları sana fiyat teklifi göndersin — arayan sen değil, teklif
+        veren onlar olsun.
+      </p>
+      <div class="flex flex-col sm:flex-row gap-3">
+        <button onclick="showView('buyer')" class="px-5 py-3 rounded-lg bg-accent text-ink font-semibold hover:bg-accentdark hover:text-white transition-colors">
+          <i class="fa-solid fa-bullhorn mr-2"></i>Ücretsiz İlan Ver
+        </button>
+        <button onclick="showView('seller')" class="px-5 py-3 rounded-lg bg-ink text-white font-semibold hover:bg-ink/90 transition-colors">
+          <i class="fa-solid fa-screwdriver-wrench mr-2"></i>Esnafım, Teklif Vermek İstiyorum
+        </button>
+      </div>
+      <div class="flex gap-6 mt-8 text-sm text-steel">
+        <div><span class="font-display font-bold text-ink text-lg">20</span> marka</div>
+        <div><span class="font-display font-bold text-ink text-lg">81</span> il</div>
+        <div><span class="font-display font-bold text-ink text-lg">0₺</span> ilan ücreti</div>
+      </div>
+    </div>
+
+    <div class="hero-fade d2 bg-white border border-black/10 rounded-xl p-6">
+      <p class="text-xs font-medium text-steel mb-5">Nasıl çalışır?</p>
+      <div class="space-y-6">
+        <div class="flex gap-4">
+          <div class="w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center font-display font-semibold text-sm shrink-0">1</div>
+          <div>
+            <p class="font-medium">Talebini ücretsiz paylaş</p>
+            <p class="text-sm text-steel mt-0.5">Aracını seç, aradığın aksesuar veya modifiye parçasını anlat — istersen fotoğrafını yükle, yapay zekâ formu senin yerine doldursun.</p>
+          </div>
+        </div>
+        <div class="flex gap-4">
+          <div class="w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center font-display font-semibold text-sm shrink-0">2</div>
+          <div>
+            <p class="font-medium">Esnaf sana teklif versin</p>
+            <p class="text-sm text-steel mt-0.5">Bölgendeki aksesuarcı ve modifiye ustaları talebini görür, gizli fiyat teklifi gönderir.</p>
+          </div>
+        </div>
+        <div class="flex gap-4">
+          <div class="w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center font-display font-semibold text-sm shrink-0">3</div>
+          <div>
+            <p class="font-medium">En iyi teklifi sen seç</p>
+            <p class="text-sm text-steel mt-0.5">Gelen teklifleri "İlanlarım" sayfandan karşılaştır, uygun olanı arayıp anlaş.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white border-y border-black/10">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-10 grid sm:grid-cols-2 gap-6">
+      <div class="border border-black/10 rounded-lg p-5">
+        <i class="fa-solid fa-bullhorn text-accentdark text-xl mb-3"></i>
+        <h3 class="font-display font-semibold text-lg mb-1">Alıcılar için</h3>
+        <p class="text-sm text-steel mb-4">İlan vermek tamamen ücretsizdir. Telefon doğrulaması sahte ilanları engeller, sadece gerçek talepler havuza girer.</p>
+        <button onclick="showView('buyer')" class="text-sm font-medium text-ink hover:text-accentdark">İlan ver <i class="fa-solid fa-arrow-right-long ml-1"></i></button>
+      </div>
+      <div class="border border-black/10 rounded-lg p-5">
+        <i class="fa-solid fa-screwdriver-wrench text-accentdark text-xl mb-3"></i>
+        <h3 class="font-display font-semibold text-lg mb-1">Satıcılar / Esnaf için</h3>
+        <p class="text-sm text-steel mb-4">Talep havuzunu ücretsiz gez, gizli teklif ver. Alıcıyla doğrudan görüşmek için Premium Abone ol.</p>
+        <button onclick="showView('seller')" class="text-sm font-medium text-ink hover:text-accentdark">Talep havuzunu gör <i class="fa-solid fa-arrow-right-long ml-1"></i></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= ALICI: İLAN VER ============================= -->
+<section id="view-buyer" class="hidden">
+  <div class="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+    <h1 class="font-display font-bold text-2xl mb-1">Ücretsiz Aksesuar / Modifiye Talebi Oluştur</h1>
+    <p class="text-steel text-sm mb-6">5 adımda ilanını yayınla, çevrendeki aksesuarcı ve modifiye ustaları sana teklif versin.</p>
+
+    <div class="flex items-center mb-2">
+      <div class="step-dot step-dot-active" data-step="1">1</div><div class="step-line"></div>
+      <div class="step-dot" data-step="2">2</div><div class="step-line"></div>
+      <div class="step-dot" data-step="3">3</div><div class="step-line"></div>
+      <div class="step-dot" data-step="4">4</div><div class="step-line"></div>
+      <div class="step-dot" data-step="5">5</div>
+    </div>
+    <div class="flex justify-between text-[11px] text-steel mb-6 px-1">
+      <span>Görsel</span><span>Araç</span><span>Parça</span><span>Konum</span><span>Onay</span>
+    </div>
+
+    <div id="wizard-error" class="hidden bg-danger/10 text-danger text-sm rounded-lg px-4 py-3 mb-4">
+      <i class="fa-solid fa-triangle-exclamation mr-1"></i><span id="wizard-error-text"></span>
+    </div>
+
+    <div id="wizard-form-wrap" class="bg-white border border-black/10 rounded-xl p-5 sm:p-6">
+
+      <!-- STEP 1: AI GÖRSEL -->
+      <div class="wizard-step" data-step="1">
+        <h2 class="font-display font-semibold text-lg mb-1"><i class="fa-solid fa-camera-retro text-accentdark mr-1"></i> Görsel Yükle (AI ile Doldur)</h2>
+        <p class="text-sm text-steel mb-4">Aradığın aksesuar veya modifiye parçasının bir görselini (örnek/referans fotoğraf) yükle, yapay zekâ araç ve parça bilgilerini tahmin edip formu otomatik doldursun. Bu adım isteğe bağlıdır.</p>
+
+        <label for="ai-file-input" class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-black/15 rounded-lg py-8 cursor-pointer hover:border-accent hover:bg-accent/5 transition-colors">
+          <i class="fa-solid fa-cloud-arrow-up text-2xl text-steel"></i>
+          <span class="text-sm font-medium">Görsel seç veya sürükleyip bırak</span>
+          <span class="text-xs text-steel">JPG / PNG, maks 15MB</span>
+        </label>
+        <input type="file" id="ai-file-input" accept="image/*" class="hidden" onchange="onFileSelected(event)">
+        <p id="file-chosen-name" class="hidden text-sm mt-2 text-steel"><i class="fa-solid fa-paperclip mr-1"></i></p>
+
+        <button id="ai-analyze-btn" disabled onclick="runAiAnalyze()" class="mt-4 w-full py-3 rounded-lg bg-ink text-white font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-ink/90 transition-colors">
+          <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> AI ile Doldur
+        </button>
+
+        <div id="ai-loading-box" class="hidden mt-4 flex items-center gap-2 text-sm text-steel">
+          <i class="fa-solid fa-spinner fa-spin"></i> Yapay zekâ görseli inceliyor...
+        </div>
+        <div id="ai-result-box" class="hidden mt-4 bg-accent/10 border border-accent/30 rounded-lg p-4"></div>
+
+        <button onclick="goToStep(2)" class="mt-4 text-sm text-steel hover:text-ink underline underline-offset-2">
+          Bu adımı atla, bilgileri elle gireceğim
+        </button>
+      </div>
+
+      <!-- STEP 2: ARAÇ BİLGİLERİ -->
+      <div class="wizard-step hidden" data-step="2">
+        <h2 class="font-display font-semibold text-lg mb-4"><i class="fa-solid fa-car text-accentdark mr-1"></i> Araç Bilgileri</h2>
+        <div class="space-y-4">
+          <div>
+            <label class="text-sm font-medium block mb-1">Marka</label>
+            <select id="brand-select" onchange="onBrandChange()" class="w-full border border-black/15 rounded-lg px-3 py-2.5 bg-white"></select>
+          </div>
+          <div>
+            <label class="text-sm font-medium block mb-1">Model</label>
+            <select id="model-select" disabled class="w-full border border-black/15 rounded-lg px-3 py-2.5 bg-white disabled:bg-black/5">
+              <option value="">Önce marka seçin</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="text-sm font-medium block mb-1">Model Yılı</label>
+              <select id="year-select" class="w-full border border-black/15 rounded-lg px-3 py-2.5 bg-white"></select>
+            </div>
+            <div>
+              <label class="text-sm font-medium block mb-1">Renk</label>
+              <select id="color-select" class="w-full border border-black/15 rounded-lg px-3 py-2.5 bg-white"></select>
+            </div>
+          </div>
+          <div>
+            <label class="text-sm font-medium block mb-1">Motor / Paket <span class="text-steel font-normal">(opsiyonel)</span></label>
+            <input id="engine-input" type="text" placeholder="Örn: 1.6 16V Manuel / 1.4 TSI Comfortline"
+              class="w-full border border-black/15 rounded-lg px-3 py-2.5">
+          </div>
+        </div>
+        <div class="flex justify-between mt-6">
+          <button onclick="prevStep()" class="px-4 py-2.5 rounded-lg text-steel font-medium hover:bg-black/5">Geri</button>
+          <button onclick="nextStep()" class="px-5 py-2.5 rounded-lg bg-accent text-ink font-semibold hover:bg-accentdark hover:text-white">İleri</button>
+        </div>
+      </div>
+
+      <!-- STEP 3: PARÇA & AÇIKLAMA -->
+      <div class="wizard-step hidden" data-step="3">
+        <h2 class="font-display font-semibold text-lg mb-4"><i class="fa-solid fa-gears text-accentdark mr-1"></i> Aksesuar / Modifiye Parça Bilgisi</h2>
+        <div class="space-y-4">
+          <div>
+            <label class="text-sm font-medium block mb-1">Aksesuar / Modifiye Kategorisi</label>
+            <select id="category-select" class="w-full border border-black/15 rounded-lg px-3 py-2.5 bg-white"></select>
+          </div>
+          <div>
+            <label class="text-sm font-medium block mb-1">İhtiyaç Açıklaması</label>
+            <textarea id="description-input" oninput="updateDescCounter()" rows="4" placeholder="Örn: 17 inç spor jant arıyorum, orijinal veya temiz çıkma olabilir / Ön tampon için body kit istiyorum."
+              class="w-full border border-black/15 rounded-lg px-3 py-2.5"></textarea>
+            <p id="desc-counter" class="text-xs text-steel mt-1 text-right">0 karakter</p>
+          </div>
+        </div>
+        <div class="flex justify-between mt-6">
+          <button onclick="prevStep()" class="px-4 py-2.5 rounded-lg text-steel font-medium hover:bg-black/5">Geri</button>
+          <button onclick="nextStep()" class="px-5 py-2.5 rounded-lg bg-accent text-ink font-semibold hover:bg-accentdark hover:text-white">İleri</button>
+        </div>
+      </div>
+
+      <!-- STEP 4: KONUM -->
+      <div class="wizard-step hidden" data-step="4">
+        <h2 class="font-display font-semibold text-lg mb-4"><i class="fa-solid fa-location-dot text-accentdark mr-1"></i> Konum</h2>
+        <div class="space-y-4">
+          <div>
+            <label class="text-sm font-medium block mb-1">İl</label>
+            <div class="flex gap-2">
+              <select id="province-select" onchange="onProvinceChange()" class="flex-1 w-full border border-black/15 rounded-lg px-3 py-2.5 bg-white">
+                <option value="">Yükleniyor...</option>
+              </select>
+              <button type="button" id="province-retry-btn" onclick="loadProvinces()" class="hidden px-3 py-2.5 rounded-lg bg-ink text-white text-sm whitespace-nowrap"><i class="fa-solid fa-rotate-right mr-1"></i>Tekrar Dene</button>
+            </div>
+          </div>
+          <div>
+            <label class="text-sm font-medium block mb-1">İlçe</label>
+            <div class="flex gap-2">
+              <select id="district-select" disabled class="flex-1 w-full border border-black/15 rounded-lg px-3 py-2.5 bg-white disabled:bg-black/5">
+                <option value="">Önce il seçin</option>
+              </select>
+              <button type="button" id="district-retry-btn" onclick="onProvinceChange()" class="hidden px-3 py-2.5 rounded-lg bg-ink text-white text-sm whitespace-nowrap"><i class="fa-solid fa-rotate-right mr-1"></i>Tekrar Dene</button>
+            </div>
+          </div>
+        </div>
+        <div class="flex justify-between mt-6">
+          <button onclick="prevStep()" class="px-4 py-2.5 rounded-lg text-steel font-medium hover:bg-black/5">Geri</button>
+          <button onclick="nextStep()" class="px-5 py-2.5 rounded-lg bg-accent text-ink font-semibold hover:bg-accentdark hover:text-white">İleri</button>
+        </div>
+      </div>
+
+      <!-- STEP 5: İLETİŞİM & YAYINLA -->
+      <div class="wizard-step hidden" data-step="5">
+        <h2 class="font-display font-semibold text-lg mb-4"><i class="fa-solid fa-phone text-accentdark mr-1"></i> İletişim ve Yayınla</h2>
+
+        <div id="wizard-summary" class="bg-paper rounded-lg p-4 mb-5"></div>
+
+        <label class="text-sm font-medium block mb-1">Telefon Numarası</label>
+        <p class="text-xs text-steel mb-2">Sahte ilanları önlemek için telefon doğrulaması zorunludur. Numaran ilanda gizli kalır, sadece Premium Abone esnaflara açılır.</p>
+        <div class="flex gap-2 mb-1">
+          <input id="phone-input" type="tel" placeholder="0532 111 22 33" class="flex-1 border border-black/15 rounded-lg px-3 py-2.5">
+          <button id="send-otp-btn" data-label="Doğrulama Kodu Gönder" onclick="sendOtp()" class="px-4 py-2.5 rounded-lg bg-ink text-white text-sm font-medium whitespace-nowrap hover:bg-ink/90">Doğrulama Kodu Gönder</button>
+        </div>
+
+        <div id="otp-group" class="hidden mt-3">
+          <p id="otp-demo-note" class="hidden text-xs bg-accent/15 text-accentdark rounded-md px-3 py-2 mb-3"></p>
+          <label class="text-sm font-medium block mb-1">Doğrulama Kodu</label>
+          <div class="flex gap-2 items-center">
+            <input id="otp-input" type="text" inputmode="numeric" maxlength="4" placeholder="••••" class="otp-input w-28 border border-black/15 rounded-lg px-3 py-2.5">
+            <button id="verify-otp-btn" onclick="verifyOtp()" class="px-4 py-2.5 rounded-lg bg-accent text-ink text-sm font-semibold hover:bg-accentdark hover:text-white">Doğrula</button>
+            <span id="otp-verified-badge" class="hidden text-success text-sm font-medium"><i class="fa-solid fa-circle-check mr-1"></i>Doğrulandı</span>
+          </div>
+        </div>
+
+        <button id="publish-btn" disabled onclick="submitListing()" class="mt-6 w-full py-3 rounded-lg bg-accent text-ink font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accentdark hover:text-white transition-colors">
+          Ücretsiz İlanı Yayınla
+        </button>
+
+        <div class="flex justify-start mt-4">
+          <button onclick="prevStep()" class="px-4 py-2.5 rounded-lg text-steel font-medium hover:bg-black/5">Geri</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- YAYIN SONRASI BAŞARI EKRANI -->
+    <div id="wizard-success" class="hidden bg-white border border-black/10 rounded-xl p-8 text-center">
+      <i class="fa-solid fa-circle-check text-success text-4xl mb-3"></i>
+      <h2 class="font-display font-bold text-xl mb-1">İlanın yayınlandı!</h2>
+      <p id="success-summary" class="text-sm text-steel mb-6"></p>
+      <div class="flex flex-col sm:flex-row justify-center gap-3">
+        <button onclick="resetWizard()" class="px-5 py-2.5 rounded-lg bg-ink text-white font-medium hover:bg-ink/90">Yeni İlan Ver</button>
+        <button onclick="showView('mylistings'); document.getElementById('my-phone-input').value = wizard.phone;" class="px-5 py-2.5 rounded-lg border border-black/15 font-medium hover:bg-black/5">İlanlarımı Gör</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= SATICI PANELİ ============================= -->
+<section id="view-seller" class="hidden">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+      <div>
+        <h1 class="font-display font-bold text-2xl mb-1">Talep Havuzu</h1>
+        <p class="text-steel text-sm">Bölgendeki tüm parça taleplerini gör, gizli fiyat teklifi gönder.</p>
+      </div>
+
+      <div class="flex items-center gap-3 bg-white border border-black/10 rounded-lg p-2.5 self-start">
+        <i id="mode-icon" class="fa-solid fa-lock text-steel px-1"></i>
+        <div class="flex rounded-md overflow-hidden border border-black/10">
+          <button id="mode-free-btn" class="mode-btn px-3 py-1.5 text-sm font-medium" onclick="setSellerMode(false)">Ücretsiz Üye</button>
+          <button id="mode-premium-btn" class="mode-btn px-3 py-1.5 text-sm font-medium" onclick="setSellerMode(true)">Premium Abone</button>
+        </div>
+      </div>
+    </div>
+
+    <p id="mode-caption" class="text-xs text-steel mb-6 -mt-3">
+      <i class="fa-solid fa-circle-info mr-1"></i>Esnaf Modu Simülatörü: gerçek bir ödeme alınmaz, sadece iletişim kilidinin nasıl çalıştığını gösterir.
+    </p>
+
+    <div class="bg-white border border-black/10 rounded-lg p-4 mb-6 grid sm:grid-cols-3 gap-3">
+      <select id="filter-province" onchange="refreshListings()" class="border border-black/15 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="">Tüm İller</option>
+      </select>
+      <select id="filter-brand" onchange="refreshListings()" class="border border-black/15 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="">Tüm Markalar</option>
+      </select>
+      <select id="filter-category" onchange="refreshListings()" class="border border-black/15 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="">Tüm Kategoriler</option>
+      </select>
+    </div>
+
+    <div id="listings-grid" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+  </div>
+</section>
+
+<!-- ============================= İLANLARIM ============================= -->
+<section id="view-mylistings" class="hidden">
+  <div class="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+    <h1 class="font-display font-bold text-2xl mb-1">İlanlarım</h1>
+    <p class="text-steel text-sm mb-6">Doğruladığın telefon numaranı gir, ilanlarını ve gelen teklifleri gör.</p>
+    <div class="flex gap-2 mb-6">
+      <input id="my-phone-input" type="tel" placeholder="0532 111 22 33" class="flex-1 border border-black/15 rounded-lg px-3 py-2.5 bg-white">
+      <button onclick="fetchMyListings()" class="px-4 py-2.5 rounded-lg bg-ink text-white text-sm font-medium hover:bg-ink/90">Görüntüle</button>
+    </div>
+    <div id="my-listings-result"></div>
+  </div>
+</section>
+</main>
+
+<!-- TEKLİF MODALI -->
+<div id="offer-modal" class="hidden fixed inset-0 z-50 bg-ink/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
+  <div class="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl p-5 sm:p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-display font-semibold text-lg">Fiyat Teklifi Gönder</h3>
+      <button onclick="closeOfferModal()" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-black/5" aria-label="Kapat"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <form id="offer-form" onsubmit="submitOffer(event)" class="space-y-3">
+      <div>
+        <label class="text-sm font-medium block mb-1">İşletme / Ad Soyad</label>
+        <input id="offer-seller-name" type="text" required class="w-full border border-black/15 rounded-lg px-3 py-2.5" placeholder="Örn: Yılmaz Oto Çıkma">
+      </div>
+      <div>
+        <label class="text-sm font-medium block mb-1">Telefon (alıcıya iletilecek)</label>
+        <input id="offer-seller-phone" type="tel" required class="w-full border border-black/15 rounded-lg px-3 py-2.5" placeholder="0532 111 22 33">
+      </div>
+      <div>
+        <label class="text-sm font-medium block mb-1">Teklif Fiyatı (₺)</label>
+        <input id="offer-price" type="number" min="1" step="0.01" required class="w-full border border-black/15 rounded-lg px-3 py-2.5" placeholder="Örn: 1500">
+      </div>
+      <div>
+        <label class="text-sm font-medium block mb-1">Mesaj <span class="text-steel font-normal">(opsiyonel)</span></label>
+        <textarea id="offer-message" rows="3" class="w-full border border-black/15 rounded-lg px-3 py-2.5" placeholder="Parça stokta, orijinal, temiz çıkma..."></textarea>
+      </div>
+      <button id="offer-submit-btn" type="submit" class="w-full py-3 rounded-lg bg-accent text-ink font-semibold hover:bg-accentdark hover:text-white transition-colors">
+        Teklifi Gönder
+      </button>
+      <p class="text-xs text-steel text-center">Teklifin sadece bu ilanın sahibine görünür.</p>
+    </form>
+  </div>
+</div>
+
+<div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white bg-ink max-w-[90vw] text-center"></div>
+
+<footer class="bg-ink text-white/70 mt-10">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8 text-sm">
+    <p class="text-white font-display font-semibold mb-2">Parça İste</p>
+    <p class="mb-1">Bu bir MVP demo uygulamasıdır. SMS doğrulama ve Premium Abonelik iletişim kilidi simülasyondur, gerçek ödeme alınmaz.</p>
+    <p>İl / ilçe verileri <a href="https://turkiyeapi.dev" target="_blank" rel="noopener" class="underline hover:text-white">TurkiyeAPI</a> üzerinden anlık olarak çekilir.</p>
+  </div>
+</footer>
+
+<script>
+// ==========================================================================
+// GLOBAL STATE
+// ==========================================================================
+let META = null;
+let provincesData = [];
+let districtsCache = {};
+let sellerMode = false;
+let currentStep = 1;
+const TOTAL_STEPS = 5;
+let myListingsPhone = '';
+let currentOfferListingId = null;
+let otpResendTimer = null;
+
+let wizard = {
+  image_filename: null, ai_filled: false,
+  brand: '', model: '', year: '', color: '', engine_package: '',
+  part_category: '', description: '',
+  province: '', province_id: null, district: '',
+  phone: '', phone_verified: false,
+};
+
+// ==========================================================================
+// UTIL
+// ==========================================================================
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+let toastTimer = null;
+function showToast(msg, isError) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white max-w-[90vw] text-center ' + (isError ? 'bg-danger' : 'bg-ink');
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 3500);
+}
+
+function timeAgo(iso) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'az önce';
+  if (mins < 60) return mins + ' dk önce';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + ' sa önce';
+  return Math.floor(hrs / 24) + ' gün önce';
+}
+
+// ==========================================================================
+// NAV / VIEW SWITCH
+// ==========================================================================
+function showView(name) {
+  ['home', 'buyer', 'seller', 'mylistings'].forEach(v => {
+    document.getElementById('view-' + v).classList.toggle('hidden', v !== name);
+  });
+  document.querySelectorAll('[data-nav]').forEach(b => {
+    b.classList.toggle('nav-btn-active', b.dataset.nav === name);
+  });
+  document.getElementById('mobile-nav').classList.add('hidden');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (name === 'seller') refreshListings();
+}
+function toggleMobileNav() {
+  document.getElementById('mobile-nav').classList.toggle('hidden');
+}
+
+// ==========================================================================
+// BOOT / META
+// ==========================================================================
+async function boot() {
+  try {
+    const res = await fetch('/api/meta');
+    META = await res.json();
+  } catch (e) {
+    showToast('Form verileri yüklenemedi, sayfayı yenile.', true);
+    return;
+  }
+  populateBrandSelect();
+  populateYearSelect();
+  populateColorSelect();
+  populateCategorySelect();
+  populateFilterSelects();
+  loadProvinces();
+}
+
+function populateBrandSelect() {
+  const sel = document.getElementById('brand-select');
+  sel.innerHTML = '<option value="">Marka seçin</option>' +
+    Object.keys(META.brands).sort().map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+}
+function onBrandChange() {
+  const brand = document.getElementById('brand-select').value;
+  wizard.brand = brand;
+  wizard.model = '';
+  const modelSel = document.getElementById('model-select');
+  if (!brand) {
+    modelSel.innerHTML = '<option value="">Önce marka seçin</option>';
+    modelSel.disabled = true;
+    return;
+  }
+  const models = META.brands[brand] || [];
+  modelSel.innerHTML = '<option value="">Model seçin</option>' +
+    models.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+  modelSel.disabled = false;
+}
+function populateYearSelect() {
+  document.getElementById('year-select').innerHTML =
+    '<option value="">Yıl seçin</option>' + META.years.map(y => `<option value="${y}">${y}</option>`).join('');
+}
+function populateColorSelect() {
+  document.getElementById('color-select').innerHTML =
+    '<option value="">Renk seçin</option>' + META.colors.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+}
+function populateCategorySelect() {
+  document.getElementById('category-select').innerHTML =
+    '<option value="">Kategori seçin</option>' + META.categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+}
+function populateFilterSelects() {
+  document.getElementById('filter-brand').innerHTML =
+    '<option value="">Tüm Markalar</option>' + Object.keys(META.brands).sort().map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+  document.getElementById('filter-category').innerHTML =
+    '<option value="">Tüm Kategoriler</option>' + META.categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+}
+
+// ==========================================================================
+// İL / İLÇE (TurkiyeAPI — https://turkiyeapi.dev)
+// Dayanıklılık için: birincil (nested) uç nokta denenir, başarısız olursa
+// alternatif (düz koleksiyon) uç nokta denenir. İkisi de başarısız olursa
+// kullanıcıya görünür bir "Tekrar Dene" butonu gösterilir (asla sessizce
+// boş kalmaz).
+// ==========================================================================
+async function fetchJsonSafe(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function loadProvinces() {
+  const provinceSel = document.getElementById('province-select');
+  const retryBtn = document.getElementById('province-retry-btn');
+  retryBtn.classList.add('hidden');
+  provinceSel.innerHTML = '<option value="">Yükleniyor...</option>';
+
+  let json = await fetchJsonSafe('https://api.turkiyeapi.dev/v2/provinces?fields=id,name&sort=name&limit=100');
+  if (!json || !Array.isArray(json.data) || json.data.length === 0) {
+    // Alternatif deneme (bazı vekil/CDN önbellekleri sorgu dizesine duyarlı olabilir)
+    json = await fetchJsonSafe('https://api.turkiyeapi.dev/v2/provinces?limit=100');
+  }
+  provincesData = (json && Array.isArray(json.data)) ? json.data : [];
+
+  if (provincesData.length === 0) {
+    provinceSel.innerHTML = '<option value="">İl listesi yüklenemedi</option>';
+    retryBtn.classList.remove('hidden');
+    return;
+  }
+  provinceSel.innerHTML = '<option value="">İl seçin</option>' +
+    provincesData.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+  document.getElementById('filter-province').innerHTML = '<option value="">Tüm İller</option>' +
+    provincesData.slice().sort((a, b) => a.name.localeCompare(b.name, 'tr')).map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('');
+}
+
+function extractDistrictArray(json) {
+  if (!json) return null;
+  let d = json.data;
+  if (Array.isArray(d)) return d;
+  if (d && Array.isArray(d.districts)) return d.districts;
+  return null;
+}
+
+async function onProvinceChange() {
+  const provinceSel = document.getElementById('province-select');
+  const provinceId = provinceSel.value;
+  const districtSel = document.getElementById('district-select');
+  const retryBtn = document.getElementById('district-retry-btn');
+  retryBtn.classList.add('hidden');
+  wizard.province = provinceId ? provinceSel.options[provinceSel.selectedIndex].text : '';
+  wizard.province_id = provinceId ? Number(provinceId) : null;
+  wizard.district = '';
+
+  if (!provinceId) {
+    districtSel.innerHTML = '<option value="">Önce il seçin</option>';
+    districtSel.disabled = true;
+    return;
+  }
+  districtSel.disabled = true;
+  districtSel.innerHTML = '<option value="">Yükleniyor...</option>';
+
+  if (!districtsCache[provinceId] || !districtsCache[provinceId].length) {
+    // 1) Birincil: iç içe (nested) uç nokta
+    let json = await fetchJsonSafe(`https://api.turkiyeapi.dev/v2/provinces/${provinceId}/districts?fields=id,name&limit=100`);
+    let districts = extractDistrictArray(json);
+    // 2) Yedek: düz koleksiyon uç noktası, provinceId ile filtrelenmiş
+    if (!districts || !districts.length) {
+      json = await fetchJsonSafe(`https://api.turkiyeapi.dev/v2/districts?provinceId=${provinceId}&fields=id,name&sort=name&limit=100`);
+      districts = extractDistrictArray(json);
+    }
+    districtsCache[provinceId] = districts || [];
+  }
+
+  const districts = districtsCache[provinceId];
+  if (!districts.length) {
+    districtSel.innerHTML = '<option value="">İlçe listesi yüklenemedi</option>';
+    districtSel.disabled = true;
+    retryBtn.classList.remove('hidden');
+    return;
+  }
+  districtSel.innerHTML = '<option value="">İlçe seçin</option>' +
+    districts.slice().sort((a, b) => a.name.localeCompare(b.name, 'tr')).map(d => `<option value="${escapeHtml(d.name)}">${escapeHtml(d.name)}</option>`).join('');
+  districtSel.disabled = false;
+}
+function onDistrictChange() {
+  const sel = document.getElementById('district-select');
+  wizard.district = sel.value;
+}
+
+// ==========================================================================
+// AI VISION SİMÜLASYONU
+// ==========================================================================
+function onFileSelected(e) {
+  const file = e.target.files[0];
+  const label = document.getElementById('file-chosen-name');
+  const btn = document.getElementById('ai-analyze-btn');
+  if (file) {
+    label.innerHTML = `<i class="fa-solid fa-paperclip mr-1"></i>${escapeHtml(file.name)}`;
+    label.classList.remove('hidden');
+    btn.disabled = false;
+  } else {
+    label.classList.add('hidden');
+    btn.disabled = true;
+  }
+}
+
+async function runAiAnalyze() {
+  const fileInput = document.getElementById('ai-file-input');
+  const file = fileInput.files[0];
+  if (!file) return;
+  const btn = document.getElementById('ai-analyze-btn');
+  const resultBox = document.getElementById('ai-result-box');
+  const loadingBox = document.getElementById('ai-loading-box');
+  btn.disabled = true;
+  loadingBox.classList.remove('hidden');
+  resultBox.classList.add('hidden');
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch('/api/ai-analyze', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('analiz başarısız');
+    const data = await res.json();
+    applyAiResult(data);
+  } catch (e) {
+    showToast('Yapay zekâ analizi başarısız oldu, bilgileri elle girebilirsin.', true);
+  } finally {
+    loadingBox.classList.add('hidden');
+    btn.disabled = false;
+  }
+}
+
+function applyAiResult(data) {
+  wizard.ai_filled = true;
+  wizard.image_filename = data.source_filename || null;
+
+  document.getElementById('brand-select').value = data.brand;
+  onBrandChange();
+  document.getElementById('model-select').value = data.model;
+  wizard.model = data.model;
+  document.getElementById('year-select').value = data.year;
+  wizard.year = data.year;
+  document.getElementById('color-select').value = data.color;
+  wizard.color = data.color;
+  document.getElementById('category-select').value = data.part_category;
+  wizard.part_category = data.part_category;
+  document.getElementById('description-input').value = data.description;
+  wizard.description = data.description;
+  updateDescCounter();
+
+  const resultBox = document.getElementById('ai-result-box');
+  resultBox.innerHTML = `
+    <div class="flex items-start gap-3">
+      <i class="fa-solid fa-wand-magic-sparkles text-accentdark text-lg mt-0.5"></i>
+      <div>
+        <p class="font-medium text-sm">Yapay zekâ tespiti tamamlandı</p>
+        <p class="text-sm text-steel mt-1">${escapeHtml(data.brand)} ${escapeHtml(data.model)} · ${data.year} · ${escapeHtml(data.color)} — ${escapeHtml(data.part_category)}</p>
+        <p class="text-xs text-steel mt-2">Bu bilgiler 2. ve 3. adıma otomatik aktarıldı. Dilersen düzenleyebilirsin.</p>
+      </div>
+    </div>`;
+  resultBox.classList.remove('hidden');
+  showToast('AI analizi tamamlandı, form dolduruldu.');
+}
+
+// ==========================================================================
+// WIZARD NAVİGASYON
+// ==========================================================================
+function goToStep(n) {
+  if (n < 1 || n > TOTAL_STEPS) return;
+  document.querySelectorAll('.wizard-step').forEach(el => {
+    el.classList.toggle('hidden', Number(el.dataset.step) !== n);
+  });
+  document.querySelectorAll('.step-dot').forEach(el => {
+    const s = Number(el.dataset.step);
+    el.classList.toggle('step-dot-active', s === n);
+    el.classList.toggle('step-dot-done', s < n);
+  });
+  currentStep = n;
+  clearStepError();
+  if (n === 5) renderSummary();
+  const anchor = document.getElementById('view-buyer');
+  window.scrollTo({ top: anchor.offsetTop - 70, behavior: 'smooth' });
+}
+function nextStep() {
+  if (!validateStep(currentStep)) return;
+  goToStep(currentStep + 1);
+}
+function prevStep() { goToStep(currentStep - 1); }
+
+function validateStep(n) {
+  clearStepError();
+  if (n === 2) {
+    wizard.brand = document.getElementById('brand-select').value;
+    wizard.model = document.getElementById('model-select').value;
+    wizard.year = document.getElementById('year-select').value;
+    wizard.color = document.getElementById('color-select').value;
+    wizard.engine_package = document.getElementById('engine-input').value.trim();
+    if (!wizard.brand || !wizard.model || !wizard.year || !wizard.color) {
+      showStepError('Lütfen marka, model, yıl ve renk bilgilerini seçin.');
+      return false;
+    }
+  }
+  if (n === 3) {
+    wizard.part_category = document.getElementById('category-select').value;
+    wizard.description = document.getElementById('description-input').value.trim();
+    if (!wizard.part_category) { showStepError('Lütfen parça kategorisi seçin.'); return false; }
+    if (wizard.description.length < 10) { showStepError('Açıklama en az 10 karakter olmalı.'); return false; }
+  }
+  if (n === 4) {
+    onDistrictChange();
+    if (!wizard.province || !wizard.district) { showStepError('Lütfen il ve ilçe seçin.'); return false; }
+  }
+  return true;
+}
+function showStepError(msg) {
+  document.getElementById('wizard-error-text').textContent = msg;
+  document.getElementById('wizard-error').classList.remove('hidden');
+}
+function clearStepError() {
+  document.getElementById('wizard-error').classList.add('hidden');
+}
+function updateDescCounter() {
+  const val = document.getElementById('description-input').value;
+  document.getElementById('desc-counter').textContent = val.length + ' karakter';
+}
+function renderSummary() {
+  document.getElementById('wizard-summary').innerHTML = `
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+      <dt class="text-steel">Araç</dt><dd class="font-medium">${escapeHtml(wizard.brand)} ${escapeHtml(wizard.model)} · ${escapeHtml(String(wizard.year))}</dd>
+      <dt class="text-steel">Renk</dt><dd>${escapeHtml(wizard.color)}</dd>
+      <dt class="text-steel">Motor / Paket</dt><dd>${wizard.engine_package ? escapeHtml(wizard.engine_package) : '—'}</dd>
+      <dt class="text-steel">Parça</dt><dd>${escapeHtml(wizard.part_category)}</dd>
+      <dt class="text-steel">Konum</dt><dd>${escapeHtml(wizard.province)} / ${escapeHtml(wizard.district)}</dd>
+    </dl>
+    <p class="text-sm mt-3 border-t border-black/10 pt-3">${escapeHtml(wizard.description)}</p>`;
+}
+
+// ==========================================================================
+// OTP (SMS DOĞRULAMA SİMÜLASYONU)
+// ==========================================================================
+async function sendOtp() {
+  const phone = document.getElementById('phone-input').value.trim();
+  if (!phone) { showToast('Lütfen telefon numaranı gir.', true); return; }
+  const btn = document.getElementById('send-otp-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/otp/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.detail || 'Kod gönderilemedi.', true); btn.disabled = false; return; }
+    wizard.phone = phone;
+    document.getElementById('otp-group').classList.remove('hidden');
+    const note = document.getElementById('otp-demo-note');
+    note.textContent = `Demo modu: doğrulama kodun ${data.demo_code} (gerçek SMS gönderilmez).`;
+    note.classList.remove('hidden');
+    showToast('Doğrulama kodu gönderildi.');
+    startOtpCooldown();
+  } catch (e) {
+    showToast('Kod gönderilemedi, tekrar dene.', true);
+    btn.disabled = false;
+  }
+}
+function startOtpCooldown() {
+  const btn = document.getElementById('send-otp-btn');
+  let seconds = 20;
+  btn.disabled = true;
+  clearInterval(otpResendTimer);
+  const tick = () => {
+    if (seconds < 0) {
+      clearInterval(otpResendTimer);
+      btn.disabled = false;
+      btn.textContent = 'Kodu Tekrar Gönder';
+      return;
+    }
+    btn.textContent = `Tekrar gönder (${seconds}sn)`;
+    seconds--;
+  };
+  tick();
+  otpResendTimer = setInterval(tick, 1000);
+}
+async function verifyOtp() {
+  const phone = wizard.phone;
+  const code = document.getElementById('otp-input').value.trim();
+  if (code.length !== 4) { showToast('4 haneli kodu gir.', true); return; }
+  try {
+    const res = await fetch('/api/otp/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, code })
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.detail || 'Kod hatalı.', true); return; }
+    wizard.phone_verified = true;
+    document.getElementById('otp-verified-badge').classList.remove('hidden');
+    document.getElementById('publish-btn').disabled = false;
+    document.getElementById('phone-input').disabled = true;
+    document.getElementById('send-otp-btn').disabled = true;
+    document.getElementById('otp-input').disabled = true;
+    document.getElementById('verify-otp-btn').disabled = true;
+    clearInterval(otpResendTimer);
+    showToast('Telefon doğrulandı ✓');
+  } catch (e) {
+    showToast('Doğrulama başarısız, tekrar dene.', true);
+  }
+}
+
+// ==========================================================================
+// İLAN YAYINLA
+// ==========================================================================
+async function submitListing() {
+  if (!wizard.phone_verified) { showToast('Önce telefonunu doğrula.', true); return; }
+  const btn = document.getElementById('publish-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Yayınlanıyor...';
+  const payload = {
+    phone: wizard.phone, brand: wizard.brand, model: wizard.model,
+    year: Number(wizard.year), engine_package: wizard.engine_package,
+    color: wizard.color, part_category: wizard.part_category,
+    description: wizard.description, province: wizard.province,
+    province_id: wizard.province_id, district: wizard.district,
+    ai_filled: wizard.ai_filled, image_filename: wizard.image_filename,
+  };
+  try {
+    const res = await fetch('/api/listings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.detail || 'İlan yayınlanamadı.', true);
+      btn.disabled = false; btn.innerHTML = 'Ücretsiz İlanı Yayınla';
+      return;
+    }
+    document.getElementById('wizard-form-wrap').classList.add('hidden');
+    const box = document.getElementById('wizard-success');
+    box.classList.remove('hidden');
+    document.getElementById('success-summary').textContent =
+      `${data.brand} ${data.model} için ilanın #${data.id} numarasıyla yayınlandı.`;
+  } catch (e) {
+    showToast('Bir hata oluştu, tekrar dene.', true);
+    btn.disabled = false; btn.innerHTML = 'Ücretsiz İlanı Yayınla';
+  }
+}
+
+function resetWizard() {
+  wizard = {
+    image_filename: null, ai_filled: false, brand: '', model: '', year: '',
+    color: '', engine_package: '', part_category: '', description: '',
+    province: '', province_id: null, district: '', phone: '', phone_verified: false,
+  };
+  document.getElementById('wizard-form-wrap').classList.remove('hidden');
+  document.getElementById('wizard-success').classList.add('hidden');
+
+  document.getElementById('ai-file-input').value = '';
+  document.getElementById('ai-result-box').classList.add('hidden');
+  document.getElementById('ai-loading-box').classList.add('hidden');
+  document.getElementById('file-chosen-name').classList.add('hidden');
+  document.getElementById('ai-analyze-btn').disabled = true;
+
+  document.getElementById('brand-select').value = '';
+  onBrandChange();
+  document.getElementById('year-select').value = '';
+  document.getElementById('color-select').value = '';
+  document.getElementById('engine-input').value = '';
+  document.getElementById('category-select').value = '';
+  document.getElementById('description-input').value = '';
+  updateDescCounter();
+  document.getElementById('province-select').value = '';
+  onProvinceChange();
+
+  document.getElementById('phone-input').value = ''; document.getElementById('phone-input').disabled = false;
+  document.getElementById('otp-group').classList.add('hidden');
+  document.getElementById('otp-input').value = ''; document.getElementById('otp-input').disabled = false;
+  document.getElementById('send-otp-btn').disabled = false; document.getElementById('send-otp-btn').textContent = 'Doğrulama Kodu Gönder';
+  document.getElementById('verify-otp-btn').disabled = false;
+  document.getElementById('otp-verified-badge').classList.add('hidden');
+  document.getElementById('publish-btn').disabled = true; document.getElementById('publish-btn').innerHTML = 'Ücretsiz İlanı Yayınla';
+
+  goToStep(1);
+}
+
+// ==========================================================================
+// SATICI PANELİ
+// ==========================================================================
+function setSellerMode(premium) {
+  sellerMode = premium;
+  document.getElementById('mode-free-btn').classList.toggle('mode-btn-active', !premium);
+  document.getElementById('mode-premium-btn').classList.toggle('mode-btn-active', premium);
+  const icon = document.getElementById('mode-icon');
+  icon.className = premium ? 'fa-solid fa-lock-open text-success px-1' : 'fa-solid fa-lock text-steel px-1';
+  showToast(premium ? 'Demo: Premium Abone moduna geçildi — iletişim bilgileri açıldı.' : 'Demo: Ücretsiz Üye moduna geçildi.');
+  refreshListings();
+}
+
+async function refreshListings() {
+  const grid = document.getElementById('listings-grid');
+  grid.innerHTML = '<p class="col-span-full text-center text-steel py-10"><i class="fa-solid fa-spinner fa-spin"></i> Talepler yükleniyor...</p>';
+  const params = new URLSearchParams({ is_premium: sellerMode });
+  const province = document.getElementById('filter-province').value;
+  const brand = document.getElementById('filter-brand').value;
+  const category = document.getElementById('filter-category').value;
+  if (province) params.set('province', province);
+  if (brand) params.set('brand', brand);
+  if (category) params.set('category', category);
+  try {
+    const res = await fetch('/api/listings?' + params.toString());
+    const items = await res.json();
+    renderListings(items);
+  } catch (e) {
+    grid.innerHTML = '<p class="col-span-full text-center text-danger py-10">Talepler yüklenemedi.</p>';
+  }
+}
+
+function renderListings(items) {
+  const grid = document.getElementById('listings-grid');
+  if (!items.length) {
+    grid.innerHTML = `<div class="col-span-full text-center py-14 text-steel">
+      <i class="fa-solid fa-inbox text-3xl mb-3"></i>
+      <p>Bu filtrelerle eşleşen bir talep yok.</p>
+    </div>`;
+    return;
+  }
+  grid.innerHTML = items.map(renderListingCard).join('');
+}
+
+function renderListingCard(x) {
+  let contact;
+  if (x.locked) {
+    contact = `
+      <div class="flex items-center gap-2 text-steel bg-paper rounded-md px-3 py-2 text-xs">
+        <i class="fa-solid fa-lock"></i>
+        <span>${escapeHtml(x.phone_display)} — sadece Premium Aboneler görebilir</span>
+      </div>
+      <div class="flex gap-2 mt-2">
+        <button disabled title="Premium'a geçin" class="flex-1 text-sm py-2 rounded-md bg-black/5 text-steel/60 cursor-not-allowed"><i class="fa-solid fa-phone mr-1"></i>Ara</button>
+        <button disabled title="Premium'a geçin" class="flex-1 text-sm py-2 rounded-md bg-black/5 text-steel/60 cursor-not-allowed"><i class="fa-brands fa-whatsapp mr-1"></i>WhatsApp</button>
+      </div>`;
+  } else {
+    const digits = (x.phone_display || '').replace(/\s+/g, '');
+    const waDigits = '90' + digits.slice(1);
+    const waText = encodeURIComponent(`Merhaba, ${x.brand} ${x.model} için verdiğiniz "${x.part_category}" talebi hakkında yazıyorum.`);
+    contact = `
+      <div class="flex items-center gap-2 text-success bg-success/10 rounded-md px-3 py-2 text-xs font-medium">
+        <i class="fa-solid fa-circle-check"></i><span>${escapeHtml(x.phone_display)}</span>
+      </div>
+      <div class="flex gap-2 mt-2">
+        <a href="tel:${digits}" class="flex-1 text-sm py-2 rounded-md bg-ink text-white text-center hover:bg-ink/90"><i class="fa-solid fa-phone mr-1"></i>Ara</a>
+        <a href="https://wa.me/${waDigits}?text=${waText}" target="_blank" rel="noopener" class="flex-1 text-sm py-2 rounded-md bg-success text-white text-center hover:opacity-90"><i class="fa-brands fa-whatsapp mr-1"></i>WhatsApp</a>
+      </div>`;
+  }
+  return `
+  <article class="bg-white border border-black/10 ${x.locked ? 'border-l-4 border-l-black/20' : 'border-l-4 border-l-success'} rounded-lg p-4 flex flex-col">
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-[11px] font-medium px-2 py-0.5 rounded bg-paper text-steel">${escapeHtml(x.part_category)}</span>
+      <span class="text-[11px] text-steel">${timeAgo(x.created_at)}</span>
+    </div>
+    <h3 class="font-display font-semibold text-base leading-snug">${escapeHtml(x.brand)} ${escapeHtml(x.model)} <span class="text-steel font-normal text-sm">· ${x.year}</span></h3>
+    <p class="text-xs text-steel mt-1"><i class="fa-solid fa-palette w-4"></i> ${escapeHtml(x.color)}${x.engine_package ? ' · ' + escapeHtml(x.engine_package) : ''}</p>
+    <p class="text-xs text-steel mt-0.5 mb-2"><i class="fa-solid fa-location-dot w-4"></i> ${escapeHtml(x.province)} / ${escapeHtml(x.district)}</p>
+    <p class="text-sm mb-3 flex-1">${escapeHtml(x.description)}</p>
+    ${x.ai_filled ? '<span class="inline-flex items-center gap-1 text-[11px] text-accentdark mb-2"><i class="fa-solid fa-wand-magic-sparkles"></i> AI destekli ilan</span>' : ''}
+    <p class="text-[11px] text-steel mb-2"><i class="fa-solid fa-tags"></i> ${x.offer_count} teklif verildi</p>
+    <div class="border-t border-black/10 pt-3">${contact}</div>
+    <button onclick="openOfferModal('${x.id}')" class="mt-3 w-full text-sm py-2 rounded-md bg-accent text-ink font-medium hover:bg-accentdark hover:text-white transition-colors"><i class="fa-solid fa-hand-holding-dollar mr-1"></i> Teklif Ver</button>
+  </article>`;
+}
+
+// ==========================================================================
+// TEKLİF MODALI
+// ==========================================================================
+function openOfferModal(id) {
+  currentOfferListingId = id;
+  document.getElementById('offer-form').reset();
+  document.getElementById('offer-modal').classList.remove('hidden');
+}
+function closeOfferModal() {
+  document.getElementById('offer-modal').classList.add('hidden');
+  currentOfferListingId = null;
+}
+async function submitOffer(e) {
+  e.preventDefault();
+  const seller_name = document.getElementById('offer-seller-name').value.trim();
+  const seller_phone = document.getElementById('offer-seller-phone').value.trim();
+  const price = document.getElementById('offer-price').value;
+  const message = document.getElementById('offer-message').value.trim();
+  if (!seller_name || !seller_phone || !price) { showToast('Lütfen isim, telefon ve fiyat gir.', true); return; }
+  const btn = document.getElementById('offer-submit-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/listings/${currentOfferListingId}/offers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seller_name, seller_phone, price: Number(price), message })
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.detail || 'Teklif gönderilemedi.', true); btn.disabled = false; return; }
+    showToast('Teklifin gönderildi ✓');
+    closeOfferModal();
+    refreshListings();
+  } catch (e) {
+    showToast('Bir hata oluştu.', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ==========================================================================
+// İLANLARIM
+// ==========================================================================
+async function fetchMyListings() {
+  const phone = document.getElementById('my-phone-input').value.trim();
+  if (!phone) { showToast('Telefon numaranı gir.', true); return; }
+  myListingsPhone = phone;
+  const box = document.getElementById('my-listings-result');
+  box.innerHTML = '<p class="text-center text-steel py-8"><i class="fa-solid fa-spinner fa-spin"></i> Yükleniyor...</p>';
+  try {
+    const res = await fetch('/api/my-listings?phone=' + encodeURIComponent(phone));
+    const data = await res.json();
+    if (!res.ok) { box.innerHTML = `<p class="text-center text-danger py-8">${escapeHtml(data.detail || 'Hata')}</p>`; return; }
+    renderMyListings(data);
+  } catch (e) {
+    box.innerHTML = '<p class="text-center text-danger py-8">Bir hata oluştu.</p>';
+  }
+}
+
+function renderMyListings(items) {
+  const box = document.getElementById('my-listings-result');
+  if (!items.length) {
+    box.innerHTML = '<p class="text-center text-steel py-8">Bu numarayla kayıtlı bir ilan bulunamadı.</p>';
+    return;
+  }
+  box.innerHTML = items.map(x => `
+    <div class="bg-white border border-black/10 rounded-lg p-4 mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-display font-semibold">${escapeHtml(x.brand)} ${escapeHtml(x.model)} · ${x.year}</h3>
+        <span class="text-xs px-2 py-0.5 rounded ${x.status === 'active' ? 'bg-success/10 text-success' : 'bg-black/5 text-steel'}">${x.status === 'active' ? 'Aktif' : 'Kapalı'}</span>
+      </div>
+      <p class="text-sm text-steel mb-1">${escapeHtml(x.part_category)} · ${escapeHtml(x.province)}/${escapeHtml(x.district)}</p>
+      <p class="text-sm mb-3">${escapeHtml(x.description)}</p>
+      <p class="text-xs text-steel mb-2">${x.offer_count} teklif alındı</p>
+      ${x.offers.length ? `<div class="space-y-2 mb-3">${x.offers.map(o => `
+        <div class="flex items-center justify-between bg-paper rounded-md px-3 py-2 text-sm gap-3">
+          <div class="min-w-0">
+            <p class="font-medium truncate">${escapeHtml(o.seller_name)} <span class="text-steel font-normal">· ${escapeHtml(o.seller_phone_display)}</span></p>
+            ${o.message ? `<p class="text-xs text-steel truncate">${escapeHtml(o.message)}</p>` : ''}
+          </div>
+          <span class="font-display font-semibold text-accentdark shrink-0">₺${Number(o.price).toLocaleString('tr-TR')}</span>
+        </div>`).join('')}</div>` : '<p class="text-xs text-steel mb-3">Henüz teklif yok.</p>'}
+      ${x.status === 'active' ? `<button onclick="closeMyListing('${x.id}')" class="text-xs text-danger hover:underline"><i class="fa-solid fa-xmark"></i> İlanı kapat</button>` : ''}
+    </div>`).join('');
+}
+
+async function closeMyListing(id) {
+  if (!confirm('Bu ilanı kapatmak istediğine emin misin?')) return;
+  try {
+    const res = await fetch(`/api/listings/${id}/close`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: myListingsPhone })
+    });
+    if (!res.ok) { showToast('Kapatılamadı.', true); return; }
+    showToast('İlan kapatıldı.');
+    fetchMyListings();
+  } catch (e) { showToast('Bir hata oluştu.', true); }
+}
+
+// ==========================================================================
+// INIT
+// ==========================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  boot();
+  goToStep(1);
+  document.getElementById('mode-free-btn').classList.add('mode-btn-active');
+  document.getElementById('district-select').addEventListener('change', onDistrictChange);
+});
+</script>
+</body>
+</html>
+"""
+
+
+# ==========================================================================
+# 8) UYGULAMA GİRİŞ NOKTASI — Render.com için dinamik PORT desteği
+# ==========================================================================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
