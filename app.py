@@ -48,6 +48,8 @@ CATEGORIES = ["Far", "Tampon", "Kaporta", "Motor", "Şanzıman", "Süspansiyon",
 LISTINGS: list[dict[str, Any]] = []
 OFFERS: list[dict[str, Any]] = []
 USERS: list[dict[str, Any]] = []
+MESSAGES: list[dict[str, Any]] = []
+PREMIUM_PHONES: set[str] = set()
 LOCATION_CACHE: dict[str, Any] = {"data": None, "loaded_at": None}
 
 class ListingPayload(BaseModel):
@@ -70,6 +72,7 @@ class OfferPayload(BaseModel):
     note: str = Field(min_length=2)
     premium: bool = False
     seller_image: str = Field(min_length=1)
+    seller_phone: str = Field(min_length=10)
 
 class RegisterPayload(BaseModel):
     name: str = Field(min_length=2)
@@ -80,6 +83,15 @@ class RegisterPayload(BaseModel):
 class VerifyPayload(BaseModel):
     phone: str
     code: str
+
+class MessagePayload(BaseModel):
+    listing_id: str
+    sender_phone: str = Field(min_length=10)
+    message: str = Field(min_length=1, max_length=1000)
+
+class SubscribePayload(BaseModel):
+    phone: str = Field(min_length=10)
+    payment_reference: str = Field(min_length=3)
 
 @app.post("/api/auth/register")
 def register(payload: RegisterPayload):
@@ -101,6 +113,17 @@ def verify_registration(payload: VerifyPayload):
     user.pop("otp", None)
     return {"ok": True, "message": "Telefon doğrulandı. Hesabınız aktif."}
 
+@app.post("/api/subscription/subscribe")
+def subscribe(payload: SubscribePayload):
+    phone = re.sub(r"[\s()-]", "", payload.phone)
+    user = next((u for u in USERS if u["phone"] == phone and u.get("verified")), None)
+    if not user or user.get("role") != "seller":
+        return JSONResponse({"ok": False, "message": "Önce doğrulanmış satıcı hesabı açmalısınız."}, status_code=403)
+    # MVP ödeme sağlayıcısı entegrasyon noktası: gerçek ödeme onayı burada doğrulanır.
+    PREMIUM_PHONES.add(phone)
+    user["premium"] = True
+    return {"ok": True, "message": "Premium abonelik aktif edildi.", "premium": True}
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HTMLResponse(INDEX_HTML)
@@ -111,7 +134,13 @@ def config():
 
 @app.get("/api/listings")
 def get_listings():
-    return {"listings": LISTINGS, "count": len(LISTINGS)}
+    safe = []
+    for item in LISTINGS:
+        view = dict(item)
+        view.pop("phone", None)
+        view["contact_status"] = "Alıcı onayından sonra açılır"
+        safe.append(view)
+    return {"listings": safe, "count": len(safe)}
 
 @app.post("/api/listings")
 def create_listing(payload: ListingPayload):
@@ -120,7 +149,7 @@ def create_listing(payload: ListingPayload):
         return JSONResponse({"ok": False, "message": "Araç, yıl veya paket seçimi geçersiz."}, status_code=400)
     if not re.fullmatch(r"(?:\+90|0)?5\d{9}", re.sub(r"[\s()-]", "", payload.phone)):
         return JSONResponse({"ok": False, "message": "Geçerli bir cep telefonu girin."}, status_code=400)
-    listing = {"id": str(uuid.uuid4()), **payload.model_dump(), "created_at": "Az önce", "offers": 0, "buyer_phone_verified": True}
+    listing = {"id": str(uuid.uuid4()), **payload.model_dump(), "created_at": "Az önce", "offers": 0, "buyer_phone_verified": True, "contact_unlocked": False}
     LISTINGS.insert(0, listing)
     return {"ok": True, "listing": listing}
 
@@ -144,6 +173,9 @@ async def ai_vision(file: UploadFile = File(...)):
 
 @app.post("/api/offers")
 def create_offer(payload: OfferPayload):
+    seller_phone = re.sub(r"[\s()-]", "", payload.seller_phone)
+    if seller_phone not in PREMIUM_PHONES:
+        return JSONResponse({"ok": False, "message": "Teklif vermek için ücretli Premium abonelik gereklidir."}, status_code=403)
     listing = next((x for x in LISTINGS if x["id"] == payload.listing_id), None)
     if not listing:
         return JSONResponse({"ok": False, "message": "İlan bulunamadı."}, status_code=404)
@@ -151,6 +183,21 @@ def create_offer(payload: OfferPayload):
     OFFERS.append(offer)
     listing["offers"] += 1
     return {"ok": True, "status": "pending", "message": "Teklif alıcı onayına gönderildi; tutar ve iletişim bilgileri gizlidir."}
+
+@app.post("/api/messages")
+def send_message(payload: MessagePayload):
+    phone = re.sub(r"[\s()-]", "", payload.sender_phone)
+    listing = next((x for x in LISTINGS if x["id"] == payload.listing_id), None)
+    if not listing:
+        return JSONResponse({"ok": False, "message": "İlan bulunamadı."}, status_code=404)
+    item = {"id": str(uuid.uuid4()), "listing_id": payload.listing_id, "sender_phone": phone, "message": payload.message, "created_at": "Az önce"}
+    MESSAGES.append(item)
+    return {"ok": True, "message": "Mesaj platform üzerinden gönderildi.", "item": item}
+
+@app.get("/api/messages/{listing_id}")
+def get_messages(listing_id: str, phone: str):
+    normalized = re.sub(r"[\s()-]", "", phone)
+    return {"ok": True, "messages": [{"message": m["message"], "created_at": m["created_at"], "mine": m["sender_phone"] == normalized} for m in MESSAGES if m["listing_id"] == listing_id]}
 
 @app.get("/api/locations")
 def locations():
@@ -170,7 +217,8 @@ def approve_offer(offer_id: str, phone: str = Form(...)):
     if not offer or not listing or re.sub(r"[\s()-]", "", phone) != re.sub(r"[\s()-]", "", listing["phone"]):
         return JSONResponse({"ok": False, "message": "Onay yetkisi bulunamadı."}, status_code=403)
     offer["approved"] = True
-    return {"ok": True, "message": "Teklif onaylandı; iletişim bilgileri artık alıcıya açıldı."}
+    listing["contact_unlocked"] = True
+    return {"ok": True, "message": "Teklif onaylandı; iletişim bilgileri artık alıcıya açıldı.", "buyer_phone": listing["phone"], "seller_phone": offer.get("seller_phone", ""), "seller_name": offer.get("seller_name", "")}
 
 INDEX_HTML = r'''<!doctype html>
 <html lang="tr">
@@ -200,8 +248,8 @@ async function verifyPhone(){const f=new FormData();f.append('phone',$('phone').
 $('listingForm').onsubmit=async e=>{e.preventDefault();const payload={brand:$('brand').value,model:$('model').value,year:$('year').value,trim:$('trim').value,color:$('color').value,category:$('category').value,province:$('province').value,district:$('district').value,description:$('description').value,phone:$('phone').value,buyer_image:$('buyerImage').files[0]?.name||''};const d=await (await fetch('/api/listings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();if(!d.ok)return toast(d.message);toast('İlanın yayınlandı! Esnaflar teklif vermeye başladı.');e.target.reset();$('model').disabled=true;$('district').disabled=true;loadListings();scrollToId('pool')};
 function togglePremium(){premium=$('premiumToggle').checked;$('premiumLabel').textContent=premium?'Premium':'Ücretsiz';$('toggleDot').style.transform=premium?'translateX(20px)':'translateX(0)';$('toggleDot').previousElementSibling.style.background=premium?'#10b981':'';$('premiumBanner').classList.toggle('hidden',!premium);renderListings(window.listings||[])}
 async function loadListings(){window.listings=(await (await fetch('/api/listings')).json()).listings;renderListings(window.listings)}
-function renderListings(items){$('listingGrid').innerHTML=items.length?items.map(x=>`<article class="bg-white rounded-3xl border border-orange-100 p-5 shadow-sm"><div class="flex justify-between gap-3"><div><div class="flex gap-2 flex-wrap"><span class="chip text-brand font-bold">${esc(x.category)}</span><span class="chip"><i class="fa-solid fa-location-dot mr-1 text-slate-400"></i>${esc(x.province)} / ${esc(x.district)}</span></div><h3 class="font-display text-xl font-bold mt-4">${esc(x.brand)} ${esc(x.model)} <span class="text-slate-400 font-sans text-sm">· ${esc(x.year)}</span></h3><p class="text-sm text-slate-500 mt-1">${esc(x.trim)} · ${esc(x.color)}</p></div><span class="text-xs text-slate-400 whitespace-nowrap">${esc(x.created_at)}</span></div><p class="text-sm text-slate-600 mt-4 bg-[#fffaf5] p-3 rounded-xl">${esc(x.description)}</p><div class="border-t border-orange-100 mt-4 pt-4 flex justify-between items-center"><div class="text-sm"><i class="fa-solid fa-phone text-brand mr-2"></i><span class="${premium?'':'locked'}">${esc(x.phone)}</span></div><div class="flex gap-2"><button onclick="openOffer('${x.id}')" class="bg-brand text-white rounded-lg px-3 py-2 text-xs font-bold">Teklif Ver</button><button onclick="contact('${x.phone}')" class="${premium?'':'opacity-50'} border border-orange-100 rounded-lg px-3 py-2 text-xs font-bold" ${premium?'':'disabled'}><i class="fa-brands fa-whatsapp mr-1"></i> ${premium?'WhatsApp':'Kilitli'}</button></div></div><div class="mt-3 text-xs text-slate-400"><i class="fa-solid fa-comments mr-1"></i>${x.offers} teklif · ${premium?'Premium iletişim açık':'Sadece Premium aboneler doğrudan iletişim kurabilir'}</div></article>`).join(''):'<div class="col-span-full bg-white rounded-3xl p-10 text-center border border-orange-100"><i class="fa-solid fa-inbox text-4xl text-slate-300"></i><h3 class="font-display text-xl font-bold mt-3">Henüz ilan yok</h3><p class="text-sm text-slate-500 mt-2">İlk alıcı ilanını oluşturduğunda burada görünecek.</p></div>'}
-function contact(phone){if(premium)window.location.href='tel:'+phone.replace(/\D/g,'')};function openOffer(id){const amount=prompt('Gizli teklif tutarı (TL):');if(!amount)return;const note=prompt('Kısa notunuz:','Parça temiz ve gönderime hazır.');if(!note)return;const name=prompt('Esnaf / işletme adınız:','Usta Parça');if(!name)return;const sellerImage=$('sellerImage')?.files[0]?.name||'';if(!sellerImage){toast('Teklif göndermek için satıcı fotoğrafı zorunludur.');return}fetch('/api/offers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:id,seller_name:name,amount,note,premium,seller_image:sellerImage})}).then(r=>r.json()).then(d=>{toast(d.ok?'Teklifiniz alıcı onayına gönderildi; bilgiler onaya kadar gizlidir.':(d.message||'Teklif gönderilemedi.'));loadListings()})}
+function renderListings(items){$('listingGrid').innerHTML=items.length?items.map(x=>`<article class="bg-white rounded-3xl border border-orange-100 p-5 shadow-sm"><div class="flex justify-between gap-3"><div><div class="flex gap-2 flex-wrap"><span class="chip text-brand font-bold">${esc(x.category)}</span><span class="chip"><i class="fa-solid fa-location-dot mr-1 text-slate-400"></i>${esc(x.province)} / ${esc(x.district)}</span></div><h3 class="font-display text-xl font-bold mt-4">${esc(x.brand)} ${esc(x.model)} <span class="text-slate-400 font-sans text-sm">· ${esc(x.year)}</span></h3><p class="text-sm text-slate-500 mt-1">${esc(x.trim)} · ${esc(x.color)}</p></div><span class="text-xs text-slate-400 whitespace-nowrap">${esc(x.created_at)}</span></div><p class="text-sm text-slate-600 mt-4 bg-[#fffaf5] p-3 rounded-xl">${esc(x.description)}</p><div class="border-t border-orange-100 mt-4 pt-4 flex justify-between items-center"><div class="text-xs text-slate-500"><i class="fa-solid fa-lock text-brand mr-2"></i>Telefon ve WhatsApp, alıcı onayından sonra açılır</div><div class="flex gap-2"><button onclick="openOffer('${x.id}')" class="bg-brand text-white rounded-lg px-3 py-2 text-xs font-bold">Teklif Ver</button><button onclick="messageListing('${x.id}')" class="border border-orange-100 rounded-lg px-3 py-2 text-xs font-bold"><i class="fa-solid fa-message mr-1"></i>Mesaj</button></div></div><div class="mt-3 text-xs text-slate-400"><i class="fa-solid fa-comments mr-1"></i>${x.offers} teklif · ${premium?'Premium iletişim açık':'Sadece Premium aboneler doğrudan iletişim kurabilir'}</div></article>`).join(''):'<div class="col-span-full bg-white rounded-3xl p-10 text-center border border-orange-100"><i class="fa-solid fa-inbox text-4xl text-slate-300"></i><h3 class="font-display text-xl font-bold mt-3">Henüz ilan yok</h3><p class="text-sm text-slate-500 mt-2">İlk alıcı ilanını oluşturduğunda burada görünecek.</p></div>'}
+async function messageListing(id){const phone=prompt('Kayıtlı telefonunuz:');if(!phone)return;const text=prompt('Mesajınız:');if(!text)return;const d=await (await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:id,sender_phone:phone,message:text})})).json();toast(d.message||'Mesaj gönderilemedi.')} function contact(phone){if(premium)window.location.href='tel:'+phone.replace(/\D/g,'')};function openOffer(id){const amount=prompt('Gizli teklif tutarı (TL):');if(!amount)return;const note=prompt('Kısa notunuz:','Parça temiz ve gönderime hazır.');if(!note)return;const name=prompt('Esnaf / işletme adınız:','Usta Parça');if(!name)return;const sellerImage=$('sellerImage')?.files[0]?.name||'';if(!sellerImage){toast('Teklif göndermek için satıcı fotoğrafı zorunludur.');return}fetch('/api/offers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:id,seller_name:name,amount,note,premium,seller_image:sellerImage,seller_phone:prompt('Doğrulanmış satıcı telefonunuz:','')||''})}).then(r=>r.json()).then(d=>{toast(d.ok?'Teklifiniz alıcı onayına gönderildi; bilgiler onaya kadar gizlidir.':(d.message||'Teklif gönderilemedi.'));loadListings()})}
 init();
 </script></body></html>'''
 
