@@ -5,191 +5,146 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ilan_uygulamasi_kesin_gizli_anahtar_123'
 
-# ==========================================
-# 🗄️ GEÇİCİ BELLEK VERİ SİSTEMİ (RAM)
-# ==========================================
+# Verileri geçici olarak RAM bellekte saklıyoruz
 USERS_DB = {}
 ILANLAR_DB = []
 TEKLIFLER_DB = []
 
-# --- Test İçin Hazır Veriler ---
-# 1. Alıcı Kullanıcı
+# Hazır Test Kullanıcıları
 USERS_DB["05551234567"] = {
-    "ad_soyad": "Ahmet Yılmaz",
+    "ad_soyad": "Ahmet Yilmaz",
     "sifre_hash": generate_password_hash("123456"),
-    "hesap_tipi": "alici",
-    "vergi_no": None,
-    "dukan_adresi": None
+    "hesap_tipi": "alici"
 }
-# 2. Esnaf Kullanıcı
 USERS_DB["05441234567"] = {
-    "ad_soyad": "Oto Garaj Ustası",
+    "ad_soyad": "Oto Usta",
     "sifre_hash": generate_password_hash("123456"),
-    "hesap_tipi": "esnaf",
-    "vergi_no": "12345678",
-    "dukan_adresi": "Sanayi Sitesi No: 12"
+    "hesap_tipi": "esnaf"
 }
-# 3. Örnek İlan
-ILANLAR_DB.append({
-    "id": 1,
-    "alici_id": "05551234567",
-    "ad_soyad": "Ahmet Yılmaz",
-    "kategori": "Oto Yedek Parça",
-    "marka": "Toyota",
-    "model": "Corolla",
-    "yil": "2015",
-    "detay": "Sağ ön çamurluk ve far ihtiyacım var. Orijinal çıkma parça arıyorum.",
-    "il": "Bursa",
-    "ilce": "Osmangazi",
-    "butce": "5000 TL"
-})
 
-# ==========================================
-# 🎨 GÜVENLİ TASARIM ŞABLONLARI
-# ==========================================
-
+# --- TEMEL ARAYÜZLER (Yalın ve Hatasız HTML) ---
 LOGIN_HTML = """
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Giriş Yap - İlan Uygulaması</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-        body { background-color: #0b1329; color: #ffffff; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
-        .card { background-color: #1c2541; padding: 30px; border-radius: 16px; width: 100%; max-width: 440px; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3); }
-        h2 { text-align: center; margin-bottom: 25px; color: #4cc9f0; }
-        .input-group { margin-bottom: 18px; }
-        label { display: block; margin-bottom: 8px; font-size: 14px; color: #abc4ff; }
-        input { width: 100%; padding: 12px 16px; background-color: #3a506b; border: 2px solid transparent; border-radius: 8px; color: #ffffff; font-size: 15px; outline: none; }
-        input:focus { border-color: #4cc9f0; }
-        .main-btn { width: 100%; padding: 14px; background-color: #4cc9f0; color: #0b1329; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        .footer-text { text-align: center; margin-top: 20px; font-size: 14px; color: #abc4ff; }
-        .footer-text a { color: #4cc9f0; text-decoration: none; font-weight: bold; }
-        .error-msg { background-color: #ff4d4d; color: white; padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 15px; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>İlan Uygulaması</h2>
-        {% if error %}<div class="error-msg">{{ error }}</div>{% endif %}
-        <form action="/login" method="POST">
-            <div class="input-group">
-                <label>Telefon Numarası</label>
-                <input type="tel" name="telefon" placeholder="05551234567" required>
-            </div>
-            <div class="input-group">
-                <label>Şifre</label>
-                <input type="password" name="sifre" placeholder="••••••" required>
-            </div>
-            <button type="submit" class="main-btn">Giriş Yap</button>
-        </form>
-        <div class="footer-text">Hesabınız yok mu? <a href="/register">Kayıt Olun</a></div>
-    </div>
+<body style="background:#0b1329; color:white; font-family:sans-serif; text-align:center; padding-top:50px;">
+    <h2>Ilan Uygulamasi - Giris Yap</h2>
+    {% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
+    <form method="POST" action="/login" style="display:inline-block; background:#1c2541; padding:30px; border-radius:10px;">
+        <input type="tel" name="telefon" placeholder="Telefon (05551234567)" required style="padding:10px; margin:10px; width:250px;"><br>
+        <input type="password" name="sifre" placeholder="Sifre" required style="padding:10px; margin:10px; width:250px;"><br>
+        <button type="submit" style="padding:10px 20px; background:#4cc9f0; border:none; font-weight:bold; cursor:pointer;">Giris</button>
+    </form>
+    <p>Hesabiniz yok mu? <a href="/register" style="color:#4cc9f0;">Kayit Olun</a></p>
 </body>
-</html>
 """
 
 REGISTER_HTML = """
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kayıt Ol - İlan Uygulaması</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-        body { background-color: #0b1329; color: #ffffff; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
-        .card { background-color: #1c2541; padding: 30px; border-radius: 16px; width: 100%; max-width: 440px; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3); }
-        h2 { text-align: center; margin-bottom: 25px; color: #4cc9f0; }
-        .input-group { margin-bottom: 18px; }
-        label { display: block; margin-bottom: 8px; font-size: 14px; color: #abc4ff; }
-        input, textarea { width: 100%; padding: 12px 16px; background-color: #3a506b; border: 2px solid transparent; border-radius: 8px; color: #ffffff; font-size: 15px; outline: none; }
-        input:focus, textarea:focus { border-color: #4cc9f0; }
-        textarea { height: 70px; resize: none; }
-        .radio-group { display: flex; gap: 20px; background: #3a506b; padding: 12px; border-radius: 8px; margin-top: 5px; }
-        .radio-group label { display: flex; align-items: center; gap: 6px; color: white; cursor: pointer; margin: 0; }
-        .main-btn { width: 100%; padding: 14px; background-color: #4cc9f0; color: #0b1329; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        .footer-text { text-align: center; margin-top: 20px; font-size: 14px; color: #abc4ff; }
-        .footer-text a { color: #4cc9f0; text-decoration: none; font-weight: bold; }
-        .error-msg { background-color: #ff4d4d; color: white; padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 15px; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>Hesap Oluştur</h2>
-        {% if error %}<div class="error-msg">{{ error }}</div>{% endif %}
-        <form action="/register" method="POST">
-            <div class="input-group">
-                <label>Telefon Numarası</label>
-                <input type="tel" name="telefon" placeholder="05551234567" required>
-            </div>
-            <div class="input-group">
-                <label>Ad Soyad / Firma Adı</label>
-                <input type="text" name="ad_soyad" placeholder="Ahmet Yılmaz" required>
-            </div>
-            <div class="input-group">
-                <label>Şifre</label>
-                <input type="password" name="sifre" placeholder="••••••" required>
-            </div>
-            <div class="input-group">
-                <label>Hesap Türü</label>
-                <div class="radio-group">
-                    <label><input type="radio" name="hesap_turu" value="alici" checked onclick="toggleEsnaf(false)"> Alıcı</label>
-                    <label><input type="radio" name="hesap_turu" value="esnaf" onclick="toggleEsnaf(true)"> Esnaf</label>
-                </div>
-            </div>
-            
-            <div id="esnaf-alanlari" style="display: none;">
-                <div class="input-group">
-                    <label>Vergi Numarası</label>
-                    <input type="text" name="vergi_no" placeholder="1234567890">
-                </div>
-                <div class="input-group">
-                    <label>Dükkan Adresi</label>
-                    <textarea name="dukkan_adresi" placeholder="Sanayi Sitesi No: 5..."></textarea>
-                </div>
-            </div>
-
-            <button type="submit" class="main-btn">Kayıt Ol</button>
-        </form>
-        <div class="footer-text">Zaten üye misiniz? <a href="/login">Giriş Yapın</a></div>
-    </div>
-
-    <script>
-        function toggleEsnaf(show) {
-            document.getElementById('esnaf-alanlari').style.display = show ? 'block' : 'none';
-        }
-    </script>
+<body style="background:#0b1329; color:white; font-family:sans-serif; text-align:center; padding-top:50px;">
+    <h2>Ilan Uygulamasi - Kayit Ol</h2>
+    {% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
+    <form method="POST" action="/register" style="display:inline-block; background:#1c2541; padding:30px; border-radius:10px;">
+        <input type="tel" name="telefon" placeholder="Telefon Numarasi" required style="padding:10px; margin:10px; width:250px;"><br>
+        <input type="text" name="ad_soyad" placeholder="Ad Soyad" required style="padding:10px; margin:10px; width:250px;"><br>
+        <input type="password" name="sifre" placeholder="Sifre" required style="padding:10px; margin:10px; width:250px;"><br>
+        <select name="hesap_turu" style="padding:10px; margin:10px; width:250px;">
+            <option value="alici">Alici (Ilan Veren)</option>
+            <option value="esnaf">Esnaf (Teklif Veren)</option>
+        </select><br>
+        <button type="submit" style="padding:10px 20px; background:#4cc9f0; border:none; font-weight:bold; cursor:pointer;">Kayit Ol</button>
+    </form>
+    <p>Zaten uye misiniz? <a href="/login" style="color:#4cc9f0;">Giris Yapin</a></p>
 </body>
-</html>
 """
 
 ILANLAR_HTML = """
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>İlanlar Paneli - İlan Uygulaması</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-        body { background-color: #0b1329; color: #ffffff; padding: 20px; }
-        .container { max-width: 800px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #1c2541; padding-bottom: 15px; }
-        .header h1 { color: #4cc9f0; font-size: 24px; }
-        .user-info { font-size: 14px; color: #abc4ff; text-align: right; }
-        .logout-btn { color: #ff4d4d; text-decoration: none; margin-left: 10px; font-weight: bold; }
-        .action-btn { display: inline-block; background-color: #4cc9f0; color: #0b1329; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; margin-bottom: 20px; }
-        .ilan-card { background-color: #1c2541; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
-        .ilan-header { display: flex; justify-content: space-between; color: #4cc9f0; font-weight: bold; margin-bottom: 10px; border-bottom: 1px dashed #3a506b; padding-bottom: 5px; }
-        .ilan-info { font-size: 14px; color: #abc4ff; margin-bottom: 10px; display: flex; gap: 15px; }
-        .ilan-detay { background-color: #0b1329; padding: 12px; border-radius: 6px; font-size: 15px; line-height: 1.5; margin-bottom: 15px; }
-        .teklif-section { border-top: 1px solid #3a506b; padding-top: 10px; }
-        .teklif-item { background: #3a506b; padding: 8px 12px; border-radius: 6px; margin-bottom: 5px; font-size: 14px; display: flex; justify-content: space-between; }
-        .teklif-form input { padding: 10px; background: #3a506b; border: none; border-radius: 6px; color: white; width: 130px; outline: none; }
-        .teklif-form button { padding: 10px 15px; background: #4cc9f0; border: none; border-radius: 6px; color: #0b1329; font-weight: bold; cursor: pointer; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div>
+<body style="background:#0b1329; color:white; font-family:sans-serif; padding:20px;">
+    <div style="max-width:600px; margin:0 auto; background:#1c2541; padding:20px; border-radius:10px;">
+        <h3>Hos geldiniz, {{ session['ad_soyad'] }} ({{ session['hesap_tipi'].upper() }})</h3>
+        <a href="/logout" style="color:red; float:right;">Cikis Yap</a><br><br>
+        
+        {% if session['hesap_tipi'] == 'alici' %}
+            <form method="POST" action="/yeni-ilan" style="background:#3a506b; padding:15px; border-radius:8px; margin-bottom:20px;">
+                <h4>Yeni Parca Talebi Olustur</h4>
+                <input type="text" name="kategori" placeholder="Parca Adi / Kategori" required style="padding:8px; margin:5px; width:90%;"><br>
+                <input type="text" name="detay" placeholder="Ilan Detayi (Orijinal cikma parca vb.)" required style="padding:8px; margin:5px; width:90%;"><br>
+                <input type="text" name="butce" placeholder="Butce (Orn: 3000 TL)" required style="padding:8px; margin:5px; width:90%;"><br>
+                <button type="submit" style="padding:8px 15px; background:#4cc9f0; border:none; font-weight:bold;">Ilan Ver</button>
+            </form>
+        {% endif %}
+
+        <h4>Mevcut Ilanlar</h4>
+        {% for ilan in ilanlar %}
+            <div style="background:#0b1329; padding:15px; border-radius:8px; margin-bottom:15px;">
+                <p><b>Parca:</b> {{ ilan.kategori }} | <b>Butce:</b> {{ ilan.butce }}</p>
+                <p><b>Detay:</b> {{ ilan.detay }}</p>
+                <p style="font-size:12px; color:#abc4ff;">Ilan Sahibi: {{ ilan.ad_soyad }}</p>
+            </div>
+        {% endfor %}
+    </div>
+</body>
+"""
+
+# --- ROTALAR ---
+@app.route('/')
+def home():
+    if 'telefon' in session:
+        return redirect(url_for('ilanlar_sayfasi'))
+    return redirect(url_for('login'))
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        telefon = request.form.get('telefon')
+        sifre = request.form.get('sifre')
+        user = USERS_DB.get(telefon)
+        if user and check_password_hash(user["sifre_hash"], sifre):
+            session['telefon'] = telefon
+            session['ad_soyad'] = user["ad_soyad"]
+            session['hesap_tipi'] = user["hesap_tipi"]
+            return redirect(url_for('ilanlar_sayfasi'))
+        return render_template_string(LOGIN_HTML, error="Hatali telefon veya sifre!")
+    return render_template_string(LOGIN_HTML)
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        telefon = request.form.get('telefon')
+        ad_soyad = request.form.get('ad_soyad')
+        sifre = request.form.get('sifre')
+        hesap_turu = request.form.get('hesap_turu')
+
+        if telefon in USERS_DB:
+            return render_template_string(REGISTER_HTML, error="Bu telefon numarasi zaten kayitli!")
+
+        USERS_DB[telefon] = {
+            "ad_soyad": ad_soyad,
+            "sifre_hash": generate_password_hash(sifre),
+            "hesap_tipi": hesap_turu
+        }
+        return redirect(url_for('login'))
+    return render_template_string(REGISTER_HTML)
+
+@app.route('/ilanlar')
+def ilanlar_sayfasi():
+    if 'telefon' not in session:
+        return redirect(url_for('login'))
+    return render_template_string(ILANLAR_HTML, ilanlar=ILANLAR_DB)
+
+@app.route('/yeni-ilan', methods=['POST'])
+def yeni_ilan():
+    if 'telefon' not in session or session.get('hesap_tipi') != 'alici':
+        return redirect(url_for('ilanlar_sayfasi'))
+    ILANLAR_DB.append({
+        "ad_soyad": session['ad_soyad'],
+        "kategori": request.form.get('kategori'),
+        "detay": request.form.get('detay'),
+        "butce": request.form.get('butce')
+    })
+    return redirect(url_for('ilanlar_sayfasi'))
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
