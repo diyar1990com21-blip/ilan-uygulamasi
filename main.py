@@ -718,6 +718,27 @@ def send_message(listing_id:str,body:MessageBody,request: Request):
     execute(con, "INSERT INTO notifications(id,user_id,type,title,body,link,created_at) VALUES(?,?,?,?,?,?,?)",(uuid.uuid4().hex,receiver,"message","Yeni mesaj",f"{user['name']} sana bir mesaj gönderdi.",f"/listing/{listing_id}",now_iso())); con.commit(); con.close(); return {"success":True,"id":mid}
 
 # ==========================================================================
+# 8) ANA SAYFA — GERÇEK İSTATİSTİKLER / SON TALEPLER
+# ==========================================================================
+@app.get("/api/home-stats")
+def home_stats() -> Dict[str, Any]:
+    con = db()
+    users = execute(con, "SELECT COUNT(*) c FROM users").fetchone()["c"]
+    sellers = execute(con, "SELECT COUNT(*) c FROM users WHERE role=?", ("seller",)).fetchone()["c"]
+    listings = execute(con, "SELECT COUNT(*) c FROM listings WHERE status=?", ("active",)).fetchone()["c"]
+    offers = execute(con, "SELECT COUNT(*) c FROM offers").fetchone()["c"]
+    con.close()
+    return {"users": users, "sellers": sellers, "active_listings": listings, "offers": offers}
+
+@app.get("/api/recent-listings")
+def recent_listings(limit: int = 6) -> List[Dict[str, Any]]:
+    limit = max(1, min(int(limit), 12))
+    con = db()
+    rows = execute(con, "SELECT * FROM listings WHERE status=? ORDER BY created_at DESC LIMIT ?", ("active", limit)).fetchall()
+    con.close()
+    return [_public_listing(load_listing(dict(r)["id"]), False) for r in rows]
+
+# ==========================================================================
 # 8) FRONTEND — Tek parça HTML / Tailwind CSS / Vanilla JS
 # ==========================================================================
 
@@ -917,7 +938,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <div class="grid grid-cols-3 gap-3 max-w-5xl mx-auto mt-6"><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">81</div><div class="text-xs text-steel">il hedefleme</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">0₺</div><div class="text-xs text-steel">ilan ücreti</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl">7/24</div><div class="text-xs text-steel">talep akışı</div></div></div>
+    <div class="grid grid-cols-3 gap-3 max-w-5xl mx-auto mt-6"><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl" data-home-stat="active_listings">—</div><div class="text-xs text-steel">aktif talep</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl" data-home-stat="offers">—</div><div class="text-xs text-steel">toplam teklif</div></div><div class="bg-white border border-black/10 rounded-2xl p-4 text-center"><div class="font-display font-bold text-2xl" data-home-stat="users">—</div><div class="text-xs text-steel">kayıtlı kullanıcı</div></div></div>
+  </div>
+
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 pb-10">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
+      <div><p class="text-xs font-bold text-accentdark tracking-widest">GERÇEK TALEP AKIŞI</p><h2 class="font-display font-bold text-2xl mt-1">Yeni yayınlanan talepler</h2><p class="text-sm text-steel mt-1">Kullanıcılar ihtiyacını yayınlıyor, esnaflar teklif veriyor.</p></div>
+      <button onclick="showView('seller')" class="text-sm font-semibold text-ink hover:text-accentdark">Tüm teklif havuzunu gör <i class="fa-solid fa-arrow-right ml-1"></i></button>
+    </div>
+    <div id="recent-listings" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div class="col-span-full bg-white border border-black/10 rounded-2xl p-8 text-center text-steel"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Canlı talepler yükleniyor…</div>
+    </div>
+  </div>
   </div>
 
 
@@ -1355,6 +1387,24 @@ function showView(name) {
 }
 function toggleMobileNav() {
   document.getElementById('mobile-nav').classList.toggle('hidden');
+}
+
+async function loadHomeData(){
+  try{
+    const [statsRes, recentRes] = await Promise.all([fetch('/api/home-stats'), fetch('/api/recent-listings?limit=6')]);
+    const stats = await statsRes.json();
+    const recent = await recentRes.json();
+    document.querySelectorAll('[data-home-stat]').forEach(el=>{ const key=el.dataset.homeStat; if(key==='active_listings') el.textContent=Number(stats.active_listings||0).toLocaleString('tr-TR'); if(key==='offers') el.textContent=Number(stats.offers||0).toLocaleString('tr-TR'); if(key==='users') el.textContent=Number(stats.users||0).toLocaleString('tr-TR'); });
+    const box=document.getElementById('recent-listings'); if(!box) return;
+    if(!recent.length){ box.innerHTML='<div class="col-span-full bg-white border border-black/10 rounded-2xl p-8 text-center text-steel">Henüz aktif talep yok. İlk talebi sen oluştur.</div>'; return; }
+    box.innerHTML=recent.map(x=>`<article class="bg-white border border-black/10 rounded-2xl p-5 hover:-translate-y-1 hover:shadow-xl transition-all">
+      <div class="flex items-center justify-between gap-2"><span class="text-[11px] font-bold px-2 py-1 rounded-full bg-accent/15 text-accentdark">${escapeHtml(x.part_category)}</span><span class="text-[11px] text-steel">${timeAgo(x.created_at)}</span></div>
+      <h3 class="font-display font-bold text-lg mt-3">${escapeHtml(x.brand)} ${escapeHtml(x.model)} <span class="text-steel font-normal text-sm">· ${x.year}</span></h3>
+      <p class="text-xs text-steel mt-1"><i class="fa-solid fa-location-dot mr-1"></i>${escapeHtml(x.province)} / ${escapeHtml(x.district)}</p>
+      <p class="text-sm text-steel mt-3">${escapeHtml(x.description)}</p>
+      <div class="flex items-center justify-between mt-4 pt-3 border-t border-black/10"><span class="text-xs font-semibold"><i class="fa-solid fa-hand-holding-dollar text-success mr-1"></i>${x.offer_count||0} teklif</span><button onclick="showView('seller')" class="text-xs font-bold text-ink">Teklif ver <i class="fa-solid fa-arrow-right ml-1"></i></button></div>
+    </article>`).join('');
+  }catch(e){ console.warn('home data',e); }
 }
 
 // ==========================================================================
@@ -2054,10 +2104,12 @@ async function deleteSavedSearch(id){await fetch('/api/saved-searches/'+id,{meth
 document.addEventListener('DOMContentLoaded', () => {
   boot();
   restoreSession();
+  loadHomeData();
   loadDemoFeed();
   startLiveSimulation(false);
   rotateLiveStory();
   setInterval(loadDemoFeed, 12000);
+  setInterval(loadHomeData, 30000);
   setInterval(rotateLiveStory, 3200);
   goToStep(1);
   document.getElementById('mode-free-btn').classList.add('mode-btn-active');
