@@ -587,9 +587,11 @@ def health() -> Dict[str, str]:
 
 @app.get("/api/meta")
 def get_meta() -> Dict[str, Any]:
-    """Formu doldurmak için gereken tüm sabit veriler tek seferde döner."""
+    """Form için tüm araç, model, yıl ve paket verilerini döndürür."""
+
     return {
         "brands": CAR_DATA,
+        "vehicle_specs": VEHICLE_SPECS,
         "colors": COLORS,
         "categories": PART_CATEGORIES,
         "years": YEARS,
