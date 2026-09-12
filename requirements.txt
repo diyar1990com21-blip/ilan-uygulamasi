@@ -1,5 +1,5 @@
 fastapi
 uvicorn[standard]
 pydantic
-multipart
+python-multipart
 psycopg[binary]>=3.2
