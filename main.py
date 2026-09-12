@@ -178,6 +178,203 @@ CAR_DATA: Dict[str, List[str]] = {
         "Range Rover", "Range Rover Sport", "Evoque"
     ],
 }
+# ==========================================================================
+# ARAÇ MOTOR / PAKET / DONANIM VERİLERİ
+# ==========================================================================
+
+VEHICLE_SPECS: Dict[str, Dict[str, Dict[str, List[str]]]] = {
+
+    "Volkswagen": {
+        "Golf": {
+            "2016": [
+                "1.2 TSI Trendline",
+                "1.2 TSI Comfortline",
+                "1.4 TSI Comfortline",
+                "1.6 TDI Trendline",
+                "1.6 TDI Comfortline",
+                "1.6 TDI Highline",
+                "2.0 TDI GTD",
+            ],
+            "2017": [
+                "1.0 TSI Trendline",
+                "1.0 TSI Comfortline",
+                "1.4 TSI Comfortline",
+                "1.6 TDI Trendline",
+                "1.6 TDI Comfortline",
+                "1.6 TDI Highline",
+                "2.0 TDI GTD",
+            ],
+            "2018": [
+                "1.0 TSI Trendline",
+                "1.0 TSI Comfortline",
+                "1.5 TSI Comfortline",
+                "1.6 TDI Comfortline",
+                "1.6 TDI Highline",
+                "2.0 TDI GTD",
+            ],
+        },
+
+        "Passat": {
+            "2016": [
+                "1.4 TSI Trendline",
+                "1.4 TSI Comfortline",
+                "1.6 TDI Trendline",
+                "1.6 TDI Comfortline",
+                "2.0 TDI Comfortline",
+                "2.0 TDI Highline",
+            ],
+            "2017": [
+                "1.4 TSI Comfortline",
+                "1.6 TDI Trendline",
+                "1.6 TDI Comfortline",
+                "2.0 TDI Comfortline",
+                "2.0 TDI Highline",
+            ],
+            "2018": [
+                "1.4 TSI Comfortline",
+                "1.5 TSI Comfortline",
+                "1.6 TDI Comfortline",
+                "2.0 TDI Highline",
+            ],
+        },
+    },
+
+    "Renault": {
+        "Clio": {
+            "2019": [
+                "0.9 TCe Joy",
+                "0.9 TCe Touch",
+                "0.9 TCe Icon",
+                "1.5 dCi Joy",
+                "1.5 dCi Touch",
+                "1.5 dCi Icon",
+            ],
+            "2020": [
+                "1.0 SCe Joy",
+                "1.0 TCe Joy",
+                "1.0 TCe Touch",
+                "1.0 TCe Icon",
+                "1.5 Blue dCi Joy",
+                "1.5 Blue dCi Touch",
+            ],
+        },
+
+        "Megane": {
+            "2019": [
+                "1.3 TCe Joy",
+                "1.3 TCe Touch",
+                "1.3 TCe Icon",
+                "1.5 dCi Joy",
+                "1.5 dCi Touch",
+                "1.5 dCi Icon",
+            ],
+            "2020": [
+                "1.3 TCe Joy",
+                "1.3 TCe Touch",
+                "1.3 TCe Icon",
+                "1.5 Blue dCi Joy",
+                "1.5 Blue dCi Touch",
+            ],
+        },
+    },
+
+    "Fiat": {
+        "Egea": {
+            "2016": [
+                "1.4 Fire Easy",
+                "1.4 Fire Urban",
+                "1.3 Multijet Easy",
+                "1.3 Multijet Urban",
+                "1.6 Multijet Lounge",
+            ],
+            "2017": [
+                "1.4 Fire Easy",
+                "1.4 Fire Urban",
+                "1.3 Multijet Easy",
+                "1.3 Multijet Urban",
+                "1.6 Multijet Lounge",
+            ],
+            "2018": [
+                "1.4 Fire Easy",
+                "1.4 Fire Urban",
+                "1.3 Multijet Easy",
+                "1.6 Multijet Urban",
+                "1.6 Multijet Lounge",
+            ],
+            "2019": [
+                "1.4 Fire Easy",
+                "1.4 Fire Urban",
+                "1.3 Multijet Urban",
+                "1.6 Multijet Lounge",
+            ],
+            "2020": [
+                "1.4 Fire Easy",
+                "1.4 Fire Urban",
+                "1.3 Multijet Urban",
+                "1.6 Multijet Lounge",
+            ],
+        },
+    },
+
+    "BMW": {
+        "3 Serisi": {
+            "2018": [
+                "318i Sport Line",
+                "318i Luxury Line",
+                "320i Sport Line",
+                "320i Luxury Line",
+                "320d Sport Line",
+                "320d Luxury Line",
+            ],
+            "2019": [
+                "318i Sport Line",
+                "320i Sport Line",
+                "320i Luxury Line",
+                "320d Sport Line",
+                "320d Luxury Line",
+                "330i M Sport",
+            ],
+        },
+    },
+
+    "Mercedes-Benz": {
+        "C-Serisi": {
+            "2018": [
+                "C180 Style",
+                "C180 Exclusive",
+                "C200 AMG",
+                "C200d AMG",
+                "C220d AMG",
+            ],
+            "2019": [
+                "C180 AMG",
+                "C200 AMG",
+                "C200d AMG",
+                "C220d AMG",
+            ],
+        },
+    },
+
+    "Toyota": {
+        "Corolla": {
+            "2018": [
+                "1.33 Life",
+                "1.6 Life",
+                "1.6 Touch",
+                "1.6 Advance",
+                "1.6 Premium",
+            ],
+            "2019": [
+                "1.6 Vision",
+                "1.6 Dream",
+                "1.6 Flame",
+                "1.6 Passion",
+                "1.8 Hybrid Dream",
+                "1.8 Hybrid Flame",
+            ],
+        },
+    },
+}
 
 COLORS: List[str] = [
     "Beyaz", "Siyah", "Gri", "Gümüş", "Kırmızı", "Mavi", "Lacivert",
