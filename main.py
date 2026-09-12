@@ -551,6 +551,44 @@ class ListingCreateRequest(BaseModel):
             raise ValueError("Geçersiz marka.")
         return v
 
+    @field_validator("model")
+    @classmethod
+    def _model_must_exist(cls, v: str, info) -> str:
+        brand = info.data.get("brand")
+
+        if brand and v not in CAR_DATA.get(brand, []):
+            raise ValueError(
+                f"'{v}' modeli '{brand}' markasına ait değil."
+            )
+
+        return v
+
+    @field_validator("engine_package")
+    @classmethod
+    def _package_must_exist(cls, v: Optional[str], info) -> str:
+        package = (v or "").strip()
+
+        # Paket boş bırakılabiliyorsa kabul et
+        if not package:
+            return ""
+
+        brand = info.data.get("brand")
+        model = info.data.get("model")
+        year = info.data.get("year")
+
+        if not brand or not model or not year:
+            return package
+
+        model_data = VEHICLE_SPECS.get(brand, {}).get(model, {})
+        year_packages = model_data.get(str(year), [])
+
+        if year_packages and package not in year_packages:
+            raise ValueError(
+                f"'{package}' paketi {brand} {model} {year} için geçerli değil."
+            )
+
+        return package
+
     @field_validator("color")
     @classmethod
     def _color_must_exist(cls, v: str) -> str:
