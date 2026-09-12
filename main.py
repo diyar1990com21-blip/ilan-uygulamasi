@@ -50,6 +50,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
+from typing import Dict, List
 
 # ==========================================================================
 # 1) SABİT VERİLER — Marka / Model / Renk / Parça Kategorisi
