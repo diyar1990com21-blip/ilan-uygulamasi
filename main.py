@@ -60,34 +60,123 @@ from typing import Dict, List
 # araca uygun olduğunu belirlemek için kullanılır.
 
 CAR_DATA: Dict[str, List[str]] = {
-    "Renault": ["Clio", "Megane", "Symbol", "Fluence", "Talisman", "Captur",
-                "Kadjar", "Kangoo", "Toros", "12", "9"],
-    "Fiat": ["Egea", "Linea", "Albea", "Doblo", "Punto", "Fiorino", "Panda",
-             "Tipo", "Palio", "Şahin"],
-    "Volkswagen": ["Golf", "Passat", "Polo", "Jetta", "Bora", "Caddy",
-                   "Tiguan", "Transporter", "Scirocco", "Vento"],
-    "Ford": ["Focus", "Fiesta", "Mondeo", "Connect", "Courier", "Kuga",
-             "Ranger", "Transit", "B-Max", "Puma"],
-    "Opel": ["Astra", "Corsa", "Vectra", "Insignia", "Combo", "Mokka",
-             "Meriva", "Zafira", "Grandland X"],
-    "Toyota": ["Corolla", "Yaris", "Auris", "Hilux", "C-HR", "RAV4",
-               "Avensis", "Camry"],
-    "Hyundai": ["i20", "i10", "Accent Era", "Accent Blue", "Elantra",
-                "Tucson", "Bayon", "Kona", "ix35"],
-    "Peugeot": ["301", "308", "208", "3008", "2008", "508", "Partner", "407"],
-    "Citroën": ["C-Elysée", "C3", "C4", "Berlingo", "C5", "C2", "C4 Cactus"],
-    "Honda": ["Civic", "City", "CR-V", "Jazz", "Accord"],
-    "Nissan": ["Micra", "Qashqai", "Juke", "Almera", "X-Trail"],
-    "Chevrolet": ["Aveo", "Cruze", "Lacetti", "Captiva", "Spark"],
-    "Škoda": ["Octavia", "Fabia", "Superb", "Rapid", "Yeti", "Karoq"],
-    "Seat": ["Ibiza", "Leon", "Toledo", "Córdoba", "Altea"],
-    "Mercedes-Benz": ["C-Serisi", "E-Serisi", "A-Serisi", "Vito",
-                      "Sprinter", "CLA", "GLA"],
-    "BMW": ["3 Serisi", "5 Serisi", "1 Serisi", "X1", "X3", "X5"],
-    "Audi": ["A3", "A4", "A6", "Q3", "Q5", "A1"],
-    "Dacia": ["Duster", "Sandero", "Logan", "Dokker", "Lodgy"],
-    "Kia": ["Rio", "Ceed", "Sportage", "Picanto", "Cerato", "Sorento"],
-    "Suzuki": ["Swift", "Vitara", "Baleno", "S-Cross", "Grand Vitara"],
+    "Renault": [
+        "Clio", "Megane", "Symbol", "Fluence", "Talisman",
+        "Captur", "Kadjar", "Kangoo", "Austral", "Arkana",
+        "Espace", "Rafale", "Zoe"
+    ],
+    "Fiat": [
+        "Egea", "Linea", "Albea", "Doblo", "Punto", "Fiorino",
+        "Panda", "Tipo", "Palio", "500", "500X", "500L"
+    ],
+    "Volkswagen": [
+        "Golf", "Passat", "Polo", "Jetta", "Bora", "Caddy",
+        "Tiguan", "T-Roc", "Taigo", "Touareg", "Transporter",
+        "Arteon", "ID.3", "ID.4", "ID.5", "ID.7"
+    ],
+    "Ford": [
+        "Focus", "Fiesta", "Mondeo", "Connect", "Courier",
+        "Kuga", "Ranger", "Transit", "Puma", "Mustang",
+        "Explorer", "Tourneo Custom"
+    ],
+    "Opel": [
+        "Astra", "Corsa", "Vectra", "Insignia", "Combo",
+        "Mokka", "Meriva", "Zafira", "Grandland", "Crossland"
+    ],
+    "Toyota": [
+        "Corolla", "Yaris", "Auris", "Hilux", "C-HR", "RAV4",
+        "Avensis", "Camry", "Land Cruiser", "Prius", "Aygo"
+    ],
+    "Hyundai": [
+        "i10", "i20", "i30", "Accent", "Accent Blue",
+        "Elantra", "Tucson", "Kona", "Bayon", "Santa Fe",
+        "IONIQ", "IONIQ 5", "IONIQ 6"
+    ],
+    "Peugeot": [
+        "106", "206", "207", "208", "301", "307", "308",
+        "3008", "2008", "407", "508", "5008", "Partner",
+        "Rifter", "Expert"
+    ],
+    "Citroën": [
+        "C1", "C2", "C3", "C4", "C5", "C3 Aircross",
+        "C4 Cactus", "C4 X", "C5 Aircross", "Berlingo",
+        "Jumper", "Jumpy"
+    ],
+    "Honda": [
+        "Civic", "City", "CR-V", "HR-V", "Jazz", "Accord",
+        "CR-Z", "e:Ny1"
+    ],
+    "Nissan": [
+        "Micra", "Almera", "Juke", "Qashqai", "X-Trail",
+        "Navara", "Note", "Primera", "Leaf"
+    ],
+    "Chevrolet": [
+        "Aveo", "Cruze", "Lacetti", "Captiva", "Spark",
+        "Epica", "Kalos", "Malibu"
+    ],
+    "Škoda": [
+        "Fabia", "Scala", "Octavia", "Superb", "Rapid",
+        "Yeti", "Kamiq", "Karoq", "Kodiaq", "Enyaq"
+    ],
+    "SEAT": [
+        "Ibiza", "Leon", "Toledo", "Cordoba", "Altea",
+        "Arona", "Ateca", "Tarraco"
+    ],
+    "Mercedes-Benz": [
+        "A-Serisi", "B-Serisi", "C-Serisi", "E-Serisi",
+        "S-Serisi", "CLA", "GLA", "GLB", "GLC", "GLE",
+        "GLS", "Vito", "V-Class", "Sprinter"
+    ],
+    "BMW": [
+        "1 Serisi", "2 Serisi", "3 Serisi", "4 Serisi",
+        "5 Serisi", "6 Serisi", "7 Serisi",
+        "X1", "X2", "X3", "X4", "X5", "X6", "X7",
+        "i4", "iX", "i5", "i7"
+    ],
+    "Audi": [
+        "A1", "A3", "A4", "A5", "A6", "A7", "A8",
+        "Q2", "Q3", "Q5", "Q7", "Q8", "e-tron"
+    ],
+    "Dacia": [
+        "Sandero", "Sandero Stepway", "Logan", "Duster",
+        "Lodgy", "Dokker", "Jogger", "Spring"
+    ],
+    "Kia": [
+        "Picanto", "Rio", "Ceed", "Stonic", "Sportage",
+        "Sorento", "Niro", "EV6", "EV9"
+    ],
+    "Suzuki": [
+        "Swift", "Vitara", "S-Cross", "Jimny", "Baleno",
+        "Ignis", "Across"
+    ],
+    "Tesla": [
+        "Model 3", "Model Y", "Model S", "Model X"
+    ],
+    "Volvo": [
+        "S60", "S90", "V40", "V60", "V90",
+        "XC40", "XC60", "XC90"
+    ],
+    "Mazda": [
+        "Mazda 2", "Mazda 3", "Mazda 6",
+        "CX-3", "CX-30", "CX-5", "CX-60"
+    ],
+    "Mitsubishi": [
+        "Colt", "Lancer", "ASX", "Outlander", "L200"
+    ],
+    "Subaru": [
+        "Impreza", "Forester", "XV", "Outback", "BRZ"
+    ],
+    "Jeep": [
+        "Renegade", "Compass", "Cherokee", "Grand Cherokee",
+        "Wrangler", "Avenger"
+    ],
+    "Alfa Romeo": [
+        "Giulietta", "Giulia", "Stelvio", "Tonale", "MiTo"
+    ],
+    "Land Rover": [
+        "Defender", "Discovery", "Discovery Sport",
+        "Range Rover", "Range Rover Sport", "Evoque"
+    ],
 }
 
 COLORS: List[str] = [
